@@ -1,0 +1,5 @@
+# TODO: implement in [week X] - see project bible
+venv/
+__pycache__/
+*.pyc
+.env

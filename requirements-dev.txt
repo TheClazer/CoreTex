@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest-asyncio>=0.23.0
+black>=24.4.0
+ruff>=0.4.0
