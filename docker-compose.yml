@@ -1,1 +1,42 @@
-# TODO: implement in [week X] - see project bible
+version: "3.8"
+
+services:
+  # The Redis in-memory datastore used for RQ task queuing and Overleaf TTL caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # The FastAPI backend API server serving the HTTP REST endpoints
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENVIRONMENT=development
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - redis
+
+  # The RQ background worker process that performs the document parsing and rendering
+  worker:
+    build: .
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENVIRONMENT=development
+    volumes:
+      - .:/app
+    command: python -m app.queue.worker
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:

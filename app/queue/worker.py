@@ -3,12 +3,12 @@ RQ background worker for the Word to LaTeX Converter.
 This module defines the job function and runs the worker process.
 """
 
-import os
 import logging
 from redis import Redis
 from rq import Queue, Worker
 
 from app.converter.ir_schema import ConversionResult
+from app.config import settings
 
 # Configure logging
 logging.basicConfig(
@@ -17,12 +17,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Redis Connection Settings
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-
-# Initialize Redis and RQ Queue
-redis_conn = Redis(host=REDIS_HOST, port=REDIS_PORT)
+# Initialize Redis and RQ Queue using settings
+redis_conn = Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
 conversion_queue = Queue('conversions', connection=redis_conn)
 
 

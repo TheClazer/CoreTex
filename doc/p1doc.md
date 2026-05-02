@@ -37,3 +37,24 @@ This document serves as an ongoing log of architecture decisions, file scaffoldi
 - Implement the baseline routing structures inside `app/api/routes.py` to instantiate the `APIRouter` and allow `main.py` to boot up successfully without `ImportError`.
 - Begin implementing the parsing algorithms in `app/converter/parser.py` using `python-docx`.
 - Establish the Redis connection logic and task handling in `app/queue/worker.py`.
+
+## 6. Environment Configuration
+- Added `.env` file for local development and excluded it via `.gitignore` to avoid secrets leakage.
+- Created `.env.example` as a template for team members to sync configurations easily.
+- Instantiated `app/config.py` using Pydantic's `BaseSettings`. We now expose a module-level `settings` object that maps directly to the `.env` values.
+- Integrated a property (`max_file_size_bytes`) directly into our settings model.
+- Refactored `app/api/routes.py` and `app/queue/worker.py` to strip out explicit config dictionaries and raw `os.getenv` calls, routing everything back through our centralized `settings` object.
+
+## 7. API Endpoint Integration Testing
+A test suite has been added under `tests/test_integration.py` covering our REST endpoints via `pytest`, `pytest-asyncio`, and `httpx.AsyncClient` with `ASGITransport`.
+
+**Test Cases Created:**
+1. **`test_root_endpoint`**: Verifies that `GET /` consistently routes through and returns `{"status": "ok"}`.
+2. **`test_convert_rejects_non_docx`**: Checks our file signature assertion logic to ensure files without the magic bytes (like simple `.txt` uploads) fail immediately with an HTTP 400 payload before hitting background queues.
+3. **`test_convert_rejects_large_file`**: Validates the payload limiting validation logic inside `POST /convert`. We fake a file larger than `settings.MAX_FILE_SIZE_MB` and confirm it gracefully traps an HTTP 413 (Payload Too Large).
+4. **`test_convert_accepts_valid_docx`**: Simulates the happy-path. Employs a procedural test fixture utilizing `python-docx` to synthesize a minimal but structurally valid `.docx` document in-memory. Asserts the route succeeds and the Redis task correctly hits the mocked RQ queue with a 200 HTTP response.
+5. **`test_status_not_found`**: Enforces error handling for `GET /status/{job_id}` routing. It forcefully mimics an RQ `NoSuchJobError` condition to confirm the API replies cleanly with a logical `"status": "not_found"` mapping rather than throwing a stack trace.
+6. **`test_temp_not_found`**: Tests our Overleaf-oriented intermediate link retrieval `GET /temp/{job_id}` by mocking the Redis `get` command to miss, ensuring we send back a crisp HTTP 404 informing the user their download TTL expired.
+
+## Mocking Logic Note
+- Due to the complexities of containerizing tests consistently locally vs. remote environments, our test suite aggressively mocks interactions with `redis_conn` and `conversion_queue` using `unittest.mock.patch`. This guarantees the CI/CD pipeline and the CLI command `pytest` will run consistently without expecting live Docker services in the background.
