@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.routes import router
+from app.config import settings
 
 # Rate limiter setup
 limiter = Limiter(key_func=get_remote_address)
@@ -22,19 +23,17 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# CORS configuration
-# Allowing localhost:5173 for Vite and * for initial development
-origins = [
-    "http://localhost:5173",
-    "*",
-]
-
+# CORS configuration.
+# Explicit allowlist — never use "*" alongside allow_credentials=True
+# (browsers reject that combination per the CORS spec).
+# Add production origins via the ALLOWED_ORIGINS env var (comma-separated).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Overleaf-Temp-URL"],
 )
 
 # Include API routes

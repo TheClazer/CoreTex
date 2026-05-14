@@ -1,7 +1,40 @@
+# Keep the Docker build context lean + secret-free.
+
+# Python
 venv/
-__pycache__/
+**/__pycache__/
 *.pyc
-.git/
-tests/golden/
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / frontend (built and served separately on Vercel)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+
+# Tests + dev artefacts not needed at runtime
+tests/golden/*.docx
+sample.docx
+sample.jpg
 *.pdf
-*.docx
+doc/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Git / editor / OS
+.git/
+.github/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker meta
+Dockerfile.dev
+docker-compose*.yml

@@ -1,4 +1,5 @@
 import logging
+import pickle
 import uuid
 import zipfile
 from io import BytesIO
@@ -32,14 +33,25 @@ async def convert_document(
     Endpoint 1: Upload a .docx file and enqueue a conversion job.
     """
     logger.info(f"Received convert request from {request.client.host if request.client else 'unknown'}")
-    
-    contents = await file.read()
-    
-    # Validation step 1: Size limit
-    if len(contents) > settings.max_file_size_bytes:
-        raise HTTPException(status_code=413, detail=f"File too large. Maximum {settings.MAX_FILE_SIZE_MB} MB.")
-        
-    # Validation step 2: Magic bytes for zip-based .docx
+
+    # Stream into memory with a hard size cap so a hostile upload cannot OOM
+    # the worker by sending an unbounded body before the size check fires.
+    max_bytes = settings.max_file_size_bytes
+    buffer = bytearray()
+    chunk_size = 1 << 20  # 1 MiB
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        if len(buffer) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum {settings.MAX_FILE_SIZE_MB} MB.",
+            )
+    contents = bytes(buffer)
+
+    # Magic-byte check: .docx files are zip archives starting with PK\x03\x04
     if not contents.startswith(b'PK\x03\x04'):
         raise HTTPException(status_code=400, detail="Invalid file type. Must be a .docx file.")
         
@@ -74,24 +86,35 @@ async def get_job_status(job_id: str):
     
     if job.is_finished and job.result:
         res = job.result
+        warnings_list = res.get("warnings", []) or []
+        citation_count = sum(1 for w in warnings_list if "[CITATION]" in w)
         response["result_summary"] = {
             "has_images": res.get("has_images", False),
-            "warning_count": len(res.get("warnings", [])),
-            "compile_ok": res.get("compile_ok", False)
+            "warning_count": len(warnings_list),
+            "citation_count": citation_count,
+            "compile_ok": res.get("compile_ok", False),
+            "compile_error": res.get("compile_error"),
+            "compile_error_line": res.get("compile_error_line"),
+            "template": res.get("template"),
+            "warnings": warnings_list,
         }
     elif job.is_failed:
         response["error_message"] = str(job.exc_info)
-        
+
     return response
 
 
-def zip_output(result: ConversionResult) -> BytesIO:
-    """Helper to zip output.tex and figures."""
+def zip_output(result: ConversionResult, figures: dict | None = None) -> BytesIO:
+    """Bundle output.tex (and figures/) into an in-memory zip."""
     io_stream = BytesIO()
     with zipfile.ZipFile(io_stream, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('output.tex', result.latex_source)
-        # Stub for the figures subfolder
-        zf.writestr('figures/', '')
+        if figures:
+            for name, data in figures.items():
+                zf.writestr(f'figures/{name}', data)
+        else:
+            # Maintain folder presence in zip even when figures map is empty.
+            zf.writestr('figures/.keep', '')
     io_stream.seek(0)
     return io_stream
 
@@ -112,47 +135,70 @@ async def download_result(job_id: str):
         
     # Deserialise the result back into Pydantic schema
     result = ConversionResult(**job.result)
-    
+
+    overleaf_header = {'X-Overleaf-Temp-URL': f"/temp/{job_id}"}
+
     if result.has_images:
-        zip_io = zip_output(result)
+        # Cache the FULL zip (tex + figures) for Overleaf so its snip_uri
+        # import gets the figures too. snip_uri supports both .tex and .zip.
+        raw = redis_conn.get(f"figures:{job_id}")
+        figures = pickle.loads(raw) if raw else {}
+        zip_bytes = zip_output(result, figures).getvalue()
+        redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, zip_bytes)
+        redis_conn.setex(f"temp:{job_id}:type", settings.TEMP_URL_TTL_SECONDS, "zip")
+
         return StreamingResponse(
-            zip_io,
+            BytesIO(zip_bytes),
             media_type='application/zip',
-            headers={'Content-Disposition': 'attachment; filename="output.zip"'}
+            headers={
+                'Content-Disposition': 'attachment; filename="output.zip"',
+                **overleaf_header,
+            },
         )
-    else:
-        # Store in Redis for Overleaf integration with TTL from settings
-        redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, result.latex_source)
-        
-        headers = {
+
+    # Image-free path: cache the raw .tex for Overleaf.
+    redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, result.latex_source)
+    redis_conn.setex(f"temp:{job_id}:type", settings.TEMP_URL_TTL_SECONDS, "tex")
+    return Response(
+        content=result.latex_source,
+        media_type='text/plain',
+        headers={
             'Content-Disposition': 'attachment; filename="output.tex"',
-            'X-Overleaf-Temp-URL': f"/temp/{job_id}"
-        }
-        return Response(
-            content=result.latex_source,
-            media_type='text/plain',
-            headers=headers
-        )
+            **overleaf_header,
+        },
+    )
 
 
 @router.get("/temp/{job_id}")
 async def get_temp_overleaf(job_id: str):
     """
-    Endpoint 4: Fetch temp .tex file for Overleaf integration.
+    Endpoint 4: Public snip_uri target for Overleaf one-click import.
+
+    Serves whatever was cached at /download time — either the raw .tex
+    (for documents without images) or the full .zip (tex + figures/) so
+    Overleaf's project import includes the assets.
     """
     logger.info(f"Temp file request for job {job_id}")
-    latex_source_bytes = redis_conn.get(f"temp:{job_id}")
-    
-    if not latex_source_bytes:
+    cached = redis_conn.get(f"temp:{job_id}")
+    if not cached:
         raise HTTPException(
-            status_code=404, 
-            detail="Temp file expired. Re-run conversion to get a new Overleaf link."
+            status_code=404,
+            detail="Temp file expired. Re-run conversion to get a new Overleaf link.",
         )
-        
-    latex_source = latex_source_bytes.decode('utf-8')
-    
+    kind = redis_conn.get(f"temp:{job_id}:type")
+    kind = kind.decode("ascii") if isinstance(kind, (bytes, bytearray)) else (kind or "tex")
+
+    if kind == "zip":
+        return Response(
+            content=cached,
+            media_type="application/zip",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="output.zip"',
+            },
+        )
     return Response(
-        content=latex_source,
-        media_type='text/plain',
-        headers={'Cache-Control': 'no-store'}
+        content=cached.decode("utf-8"),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-store"},
     )

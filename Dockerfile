@@ -1,15 +1,24 @@
 FROM python:3.12-slim
 
-# Install system dependencies
-# Note: texlive-full is large (~4 GB). For faster local builds during
-# development, it is commented out below. Only uncomment it for production builds
-# to enable full TeX Live pdflatex compile checks.
+# Install system dependencies.
+# Build-arg INSTALL_TEXLIVE controls whether a full TeX Live distribution is
+# installed (needed for the pdflatex compile check). Default ON for production.
+# Pass `--build-arg INSTALL_TEXLIVE=0` for a fast dev build that skips ~4 GB.
+ARG INSTALL_TEXLIVE=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pandoc \
-    libmagic1 \
-    wget \
-    curl \
-    # texlive-full \
+        pandoc \
+        libmagic1 \
+        wget \
+        curl \
+    && if [ "$INSTALL_TEXLIVE" = "1" ]; then \
+        apt-get install -y --no-install-recommends \
+            texlive-latex-base \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            texlive-publishers \
+            texlive-science ; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

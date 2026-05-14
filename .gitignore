@@ -1,5 +1,29 @@
-# TODO: implement in [week X] - see project bible
+# Python
 venv/
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Env / secrets
 .env
+.env.local
+
+# Frontend / Node
+node_modules/
+dist/
+.vite/
+coverage/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build / output
+*.pdf.aux
+*.log.tex
