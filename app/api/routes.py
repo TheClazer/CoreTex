@@ -182,7 +182,12 @@ async def get_temp_overleaf(job_id: str):
     Serves whatever was cached at /download time — either the raw .tex
     (for documents without images) or the full .zip (tex + figures/) so
     Overleaf's project import includes the assets.
+
+    FastAPI's path parser may include the .tex/.zip suffix in the path
+    parameter when the catch-all rule wins the match. Strip it so the
+    Redis lookup hits the canonical key.
     """
+    job_id = job_id.removesuffix(".tex").removesuffix(".zip")
     logger.info(f"Temp file request for job {job_id}")
     cached = redis_conn.get(f"temp:{job_id}")
     if not cached:
