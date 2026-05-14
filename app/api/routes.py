@@ -136,7 +136,10 @@ async def download_result(job_id: str):
     # Deserialise the result back into Pydantic schema
     result = ConversionResult(**job.result)
 
-    overleaf_header = {'X-Overleaf-Temp-URL': f"/temp/{job_id}"}
+    # Append .tex / .zip extension so Overleaf's snip_uri import detects
+    # the file type from the URL even if Content-Type negotiation fails.
+    ext = "zip" if result.has_images else "tex"
+    overleaf_header = {'X-Overleaf-Temp-URL': f"/temp/{job_id}.{ext}"}
 
     if result.has_images:
         # Cache the FULL zip (tex + figures) for Overleaf so its snip_uri
@@ -169,6 +172,8 @@ async def download_result(job_id: str):
     )
 
 
+@router.get("/temp/{job_id}.tex")
+@router.get("/temp/{job_id}.zip")
 @router.get("/temp/{job_id}")
 async def get_temp_overleaf(job_id: str):
     """
@@ -197,8 +202,13 @@ async def get_temp_overleaf(job_id: str):
                 "Content-Disposition": 'inline; filename="output.zip"',
             },
         )
+    # .tex content must be served with a LaTeX-aware Content-Type and a
+    # filename ending in .tex so Overleaf's snip_uri import recognises it.
     return Response(
         content=cached.decode("utf-8"),
-        media_type="text/plain",
-        headers={"Cache-Control": "no-store"},
+        media_type="application/x-tex",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'inline; filename="output.tex"',
+        },
     )
