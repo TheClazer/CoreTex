@@ -131,7 +131,7 @@ def _render_table(node: TableNode) -> str:
     spec = column_spec(node)
     cols = total_columns(node) or 1
     lines: list[str] = [
-        "\\begin{table}[h]",
+        "\\begin{table}[!htbp]",
         "\\centering",
         f"\\begin{{tabular}}{{{spec}}}",
         "\\toprule",
@@ -167,9 +167,13 @@ def _render_table(node: TableNode) -> str:
 
 
 def _render_image(node: ImageNode) -> str:
+    # [!htbp] is more permissive than [h]: try Here, then Top of page, then
+    # Bottom, then Page of floats. The `!` overrides LaTeX's internal
+    # placement-failure thresholds. Eliminates the "float specifier changed"
+    # warnings that pdflatex emits when [h] alone can't fit.
     width = "0.8\\linewidth"
     parts = [
-        "\\begin{figure}[h]",
+        "\\begin{figure}[!htbp]",
         "\\centering",
         f"\\includegraphics[width={width}]{{figures/{node.filename}}}",
     ]

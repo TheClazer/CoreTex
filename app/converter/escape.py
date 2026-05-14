@@ -77,6 +77,8 @@ _UNICODE_MATH: dict[str, str] = {
     "≡": r"\equiv", "≅": r"\cong", "≜": r"\triangleq",
     # Arithmetic
     "×": r"\times", "÷": r"\div", "±": r"\pm", "∓": r"\mp",
+    "−": "-", "‐": "-", "‑": "-",  # unicode minus / hyphens → math minus
+    "⁄": "/",  # fraction slash
     "·": r"\cdot",  # NOTE: also in _UNICODE as \textperiodcentered;
                     # math mapping wins for academic context
     "⋅": r"\cdot",
@@ -118,14 +120,53 @@ _UNICODE_MATH: dict[str, str] = {
     "ₓ": "_x",
     # Misc
     "ℓ": r"\ell", "ℏ": r"\hbar", "ℵ": r"\aleph",
+    "‖": r"\|", "⟨": r"\langle", "⟩": r"\rangle",  # norms and inner products
     "°": r"^\circ",  # NOTE: also in _UNICODE as \textdegree;
                      # math mapping wins for academic context (e.g. "45°")
 }
 
 
+# Combining diacritics that LaTeX renders via math-mode accent commands.
+# `X̃` is the codepoint sequence U+0058 U+0303 (base + combining tilde) and
+# must become `\tilde{X}` (in math mode) before pdflatex sees it. We do this
+# in a regex pre-pass so the result then flows through the normal math
+# escape machinery and merges cleanly with adjacent math glyphs.
+_COMBINING_ACCENT = {
+    "̀": "grave",   # X̀
+    "́": "acute",   # X́
+    "̂": "hat",     # X̂
+    "̃": "tilde",   # X̃
+    "̄": "bar",     # X̄
+    "̆": "breve",   # X̆
+    "̇": "dot",     # Ẋ
+    "̈": "ddot",    # Ẍ (diaeresis as double-dot)
+    "̊": "mathring",  # X̊
+    "̌": "check",   # X̌
+    "⃗": "vec",     # X⃗
+    "⃑": "overrightarrow",  # X⃑
+}
+
+_COMBINING_RE = re.compile(
+    r"([A-Za-z0-9])(" + "|".join(re.escape(c) for c in _COMBINING_ACCENT) + ")"
+)
+
+
+def _apply_combining_accents(text: str) -> str:
+    def sub(m: re.Match[str]) -> str:
+        base, mark = m.group(1), m.group(2)
+        cmd = _COMBINING_ACCENT[mark]
+        # Emit using our math sentinels so the surrounding pipeline wraps it
+        # in $...$ and merges with adjacent math content.
+        return f"{_MATH_OPEN}\\{cmd}{{{base}}}{_MATH_CLOSE}"
+
+    return _COMBINING_RE.sub(sub, text)
+
+
 def has_math_glyphs(text: str) -> bool:
     """Does the text contain any character that needs amssymb/math mode?"""
-    return any(ch in _UNICODE_MATH for ch in text)
+    if any(ch in _UNICODE_MATH for ch in text):
+        return True
+    return _COMBINING_RE.search(text) is not None
 
 
 # Sentinel wrapping each math glyph before substitution so we can later
@@ -166,7 +207,11 @@ def escape_latex(text: str) -> str:
     for src, repl in _RESERVED[1:]:  # skip the backslash rule (handled above)
         text = text.replace(src, repl)
 
-    # Phase 2 — math glyphs (before typography so e.g. `·` math mapping
+    # Phase 2a — combining accents (X̃ → $\tilde{X}$). Must run before the
+    # single-glyph math substitutions so the base letter survives intact.
+    text = _apply_combining_accents(text)
+
+    # Phase 2b — math glyphs (before typography so e.g. `·` math mapping
     # takes precedence over `\textperiodcentered`)
     for src, repl in _UNICODE_MATH.items():
         text = text.replace(src, f"{_MATH_OPEN}{repl}{_MATH_CLOSE}")

@@ -131,5 +131,26 @@ def test_has_math_glyphs():
 
     assert has_math_glyphs("X ∈ ℝ")
     assert has_math_glyphs("α")
+    assert has_math_glyphs("X̃")  # combining tilde counts
     assert not has_math_glyphs("plain ASCII text")
     assert not has_math_glyphs("—curly quotes “like these”")
+
+
+def test_unicode_minus_becomes_math_minus():
+    # U+2212 (true minus) must not survive into the LaTeX output.
+    out = escape_latex("100 − 50")
+    assert "−" not in out
+    assert "-" in out
+
+
+def test_combining_tilde_becomes_math_accent():
+    # X̃ = U+0058 + U+0303 — used for "compressed" / "approximate"
+    out = escape_latex("X̃")
+    assert "\\tilde{X}" in out
+    assert "$" in out  # wrapped in math mode
+
+
+def test_combining_hat_and_bar():
+    assert "\\hat{x}" in escape_latex("x̂")
+    assert "\\bar{y}" in escape_latex("ȳ")
+    assert "\\vec{v}" in escape_latex("v⃗")
