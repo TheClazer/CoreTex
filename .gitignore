@@ -18,12 +18,21 @@ dist/
 coverage/
 *.log
 
+# Office lock files (Word, Excel, etc. create these while a doc is open)
+~$*
+~$*.docx
+~$*.xlsx
+
+# LaTeX build artefacts
+*.aux
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# Build / output
-*.pdf.aux
-*.log.tex

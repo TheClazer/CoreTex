@@ -58,3 +58,9 @@ A test suite has been added under `tests/test_integration.py` covering our REST 
 
 ## Mocking Logic Note
 - Due to the complexities of containerizing tests consistently locally vs. remote environments, our test suite aggressively mocks interactions with `redis_conn` and `conversion_queue` using `unittest.mock.patch`. This guarantees the CI/CD pipeline and the CLI command `pytest` will run consistently without expecting live Docker services in the background.
+
+## 8. Dependency Resolution & Integration Testing Verification
+- **pydantic-settings Extraction**: Pydantic v2 moved `BaseSettings` to a dedicated package. Explicitly added `pydantic-settings>=2.2.1` to `requirements.txt` to resolve `ModuleNotFoundError`.
+- **Async Test Compatibility**: Validated that `pytest-asyncio>=0.23.0` (present in `requirements-dev.txt`) allows `pytest` to natively run tests wrapped in `@pytest.mark.asyncio`. 
+- **Successful Verification**: Re-installed virtual environment dependencies via `pip install -r requirements-dev.txt`. Ran `pytest tests/test_integration.py -v`. All 6 backend integration tests PASSED successfully.
+- **Git State**: Added and committed these final dependency and testing updates to source control.
