@@ -2,6 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Production: set REDIS_URL (Railway provides ${{Redis.REDIS_URL}}).
+    # Local dev: REDIS_HOST + REDIS_PORT (no auth on the docker-compose Redis).
+    REDIS_URL: str = ""
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     ENVIRONMENT: str = "development"

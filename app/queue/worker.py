@@ -33,7 +33,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-redis_conn = Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
+# Prefer REDIS_URL when present (production, includes password + scheme).
+# Fall back to host/port for local docker-compose dev.
+if settings.REDIS_URL:
+    redis_conn = Redis.from_url(settings.REDIS_URL)
+else:
+    redis_conn = Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
 conversion_queue = Queue("conversions", connection=redis_conn)
 
 
