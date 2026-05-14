@@ -1,0 +1,16 @@
+# Railway deployment configuration for the CoreTex RQ worker.
+# Same Docker image as the API; different start command, no HTTP healthcheck.
+#
+# To use this file: on the worker service in Railway,
+#   Settings → Config-as-code → Add File Path → enter `railway.worker.toml`.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# The worker is a long-running process that pops jobs off Redis.
+# No HTTP server, so no healthcheck path.
+startCommand = "sh -c 'python -m app.queue.worker'"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
