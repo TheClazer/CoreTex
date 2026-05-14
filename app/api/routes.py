@@ -1,5 +1,4 @@
 import logging
-import pickle
 import uuid
 import zipfile
 from io import BytesIO
@@ -144,8 +143,14 @@ async def download_result(job_id: str):
     if result.has_images:
         # Cache the FULL zip (tex + figures) for Overleaf so its snip_uri
         # import gets the figures too. snip_uri supports both .tex and .zip.
-        raw = redis_conn.get(f"figures:{job_id}")
-        figures = pickle.loads(raw) if raw else {}
+        # Figures are stored as individual raw-byte keys (no pickle).
+        manifest_raw = redis_conn.get(f"figures:{job_id}:manifest")
+        figures: dict[str, bytes] = {}
+        if manifest_raw:
+            for name in manifest_raw.decode("utf-8").splitlines():
+                blob = redis_conn.get(f"figures:{job_id}:f:{name}")
+                if blob:
+                    figures[name] = blob
         zip_bytes = zip_output(result, figures).getvalue()
         redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, zip_bytes)
         redis_conn.setex(f"temp:{job_id}:type", settings.TEMP_URL_TTL_SECONDS, "zip")

@@ -163,4 +163,47 @@ GitHub. To require these checks before merge, in GitHub:
 
 ---
 
+## Scaling constraints (known v1 limits)
+
+The v1 deployment is sized for "a few hundred conversions a day on a hobby
+project". These limits are deliberate trade-offs to fit on the Railway
+free tier — they're not bugs, but you'll want to address them before
+serving real production traffic.
+
+### Single RQ worker → head-of-line blocking
+A heavy conversion (150 equations + 20 MB images) can occupy the worker
+for 5–15 seconds. With one worker, the next user's job waits in queue.
+
+**Fix at scale**: upgrade Railway plan, deploy multiple worker replicas
+(set Replicas > 1 on the worker service), and increase Redis memory.
+
+### Figures stored in Redis (cap: ~50 MB)
+The worker stages converted figures in Redis with a 5-minute TTL. This
+is fast and free but Redis is RAM-resident — uploading 100 MB of figures
+will fill the 50 MB Redis tier and start evicting other jobs' figures.
+
+**Fix at scale**: write figures to S3 / Cloudflare R2 instead. The
+worker uploads, the API generates pre-signed URLs for the Overleaf
+snip_uri. ~30 lines of code change, swaps `redis_conn.setex(figures…)`
+for an S3 client.
+
+### Upload memory duplication
+A 20 MB upload transiently consumes ~80–100 MB across the API + RQ
+serialisation + worker boot. Fine for 5–10 concurrent uploads, painful
+beyond that on Railway's 1 GB memory cap per service.
+
+**Fix at scale**: stream uploads directly to S3 (presigned PUT), pass
+only the S3 key through RQ. The worker reads from S3 instead of
+receiving the bytes through the job payload.
+
+### TeX Live image size
+The Docker image with `texlive-latex-extra` weighs ~1.5 GB. Railway
+caches layers, so subsequent builds are fast, but cold starts after
+inactivity can take 30 seconds.
+
+**Fix at scale**: pre-warm the worker with a min-replicas setting, or
+use a smaller TeX Live subset if your templates don't need extras.
+
+---
+
 Done. You now have a publicly accessible CoreTex deployment.
