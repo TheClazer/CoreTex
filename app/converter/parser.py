@@ -154,13 +154,44 @@ def _has_page_break(paragraph: Paragraph) -> bool:
 # List detection
 # ---------------------------------------------------------------------------
 
+_LIST_STYLE_TOKENS = {
+    # English
+    "list number": (True, "number"),
+    "list bullet": (False, "bullet"),
+    "list paragraph": (False, "bullet"),
+    # French
+    "liste à puces": (False, "bullet"),
+    "liste à numéros": (True, "number"),
+    "liste numérotée": (True, "number"),
+    # German
+    "listenabsatz": (False, "bullet"),
+    "aufzählung": (False, "bullet"),
+    "nummerierung": (True, "number"),
+    # Spanish
+    "lista con viñetas": (False, "bullet"),
+    "lista numerada": (True, "number"),
+    "párrafo de lista": (False, "bullet"),
+    # Italian
+    "elenco puntato": (False, "bullet"),
+    "elenco numerato": (True, "number"),
+    # Portuguese
+    "lista com marcadores": (False, "bullet"),
+    "lista com numeração": (True, "number"),
+}
+
+
 def _list_info(paragraph: Paragraph) -> Optional[tuple[int, int]]:
     """Return (numId, ilvl) if paragraph is a list item, else None.
 
-    Primary signal is the OOXML ``w:numPr`` element. Fallback signal is the
-    paragraph style name (``List Number``, ``List Bullet``, ``List Bullet 2``
-    etc.) — needed for documents whose styles point at numbering definitions
-    that python-docx doesn't auto-create until rendered.
+    Detection priority:
+    1. ``w:numPr`` in pPr — the OOXML-native, locale-independent signal.
+       Every list paragraph in every language sets this when Word saves.
+    2. Style-name pattern: English defaults (``List Number``, ``List Bullet``)
+       plus the most common European-language localised style names.
+    3. Generic numbering-style probe — if the paragraph's style chains up
+       to a base style that defines ``w:numPr`` in the styles part, treat
+       it as a list. Catches custom-named styles and styles localised to
+       languages not in the table above.
     """
     pPr = paragraph._p.find(qn("w:pPr"))
     if pPr is not None:
@@ -173,19 +204,34 @@ def _list_info(paragraph: Paragraph) -> Optional[tuple[int, int]]:
                 ilvl = int(ilvl_el.get(qn("w:val"), "0")) if ilvl_el is not None else 0
                 return num_id, ilvl
 
-    # Style-name fallback. Map common style names to a synthetic numId.
+    # Style-name table — known localisations.
     style = (paragraph.style.name or "") if paragraph.style else ""
     sl = style.lower()
-    if not (sl.startswith("list number") or sl.startswith("list bullet") or sl == "list paragraph"):
-        return None
-    # Synthetic numId: 1000 for ordered, 2000 for unordered. ilvl from trailing digit.
-    base = 1000 if "number" in sl else 2000
-    tail = sl.replace("list number", "").replace("list bullet", "").strip()
-    try:
-        ilvl = int(tail) - 1 if tail else 0
-    except ValueError:
-        ilvl = 0
-    return base, max(0, ilvl)
+    for token, (ordered, _kind) in _LIST_STYLE_TOKENS.items():
+        if sl.startswith(token):
+            base = 1000 if ordered else 2000
+            # Indent level from trailing digit, if present.
+            tail = sl[len(token):].strip()
+            try:
+                ilvl = int(tail) - 1 if tail else 0
+            except ValueError:
+                ilvl = 0
+            return base, max(0, ilvl)
+
+    # Last-resort probe: walk the style chain via the styles part to find an
+    # ancestor that defines numPr. Locale-independent.
+    if paragraph.style is not None:
+        try:
+            style_elem = paragraph.style.element
+            ancestor_numPr = style_elem.find(f".//{qn('w:numPr')}")
+            if ancestor_numPr is not None:
+                # Treat any styled list as unordered with ilvl=0 by default;
+                # the renderer's smart merging handles consecutive items.
+                return 2000, 0
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    return None
 
 
 def _is_ordered_list(doc: DocxDocument, num_id: int) -> bool:

@@ -84,15 +84,18 @@ def run_conversion(job_id: str, docx_bytes: bytes, template: str) -> dict:
     img_nodes = _collect_image_nodes(ir_doc.nodes)
     figures = process_images(img_nodes) if img_nodes else {}
 
-    # Persist figures alongside the job so /download can stream them into the zip.
-    # Use a short TTL matching the temp URL window.
+    # Persist figures alongside the job so /download can stream them into the
+    # zip. We store each file as a separate raw-byte key (no pickle) and
+    # maintain a manifest of filenames. This avoids:
+    #   * pickle deserialisation risk if Redis is ever compromised
+    #   * the single-key bottleneck of one giant blob
+    # All keys share the same short TTL as the Overleaf temp URL.
     if figures:
-        import pickle
-        redis_conn.setex(
-            f"figures:{job_id}",
-            settings.TEMP_URL_TTL_SECONDS,
-            pickle.dumps(figures),
-        )
+        ttl = settings.TEMP_URL_TTL_SECONDS
+        manifest = "\n".join(figures.keys()).encode("utf-8")
+        redis_conn.setex(f"figures:{job_id}:manifest", ttl, manifest)
+        for name, data in figures.items():
+            redis_conn.setex(f"figures:{job_id}:f:{name}", ttl, data)
 
     # Render to LaTeX.
     latex_source, render_warnings = render(ir_doc, template=template)
