@@ -17,7 +17,7 @@
 [![Docker](https://img.shields.io/badge/Docker-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D.svg?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
 [![LaTeX](https://img.shields.io/badge/LaTeX-008080.svg?style=for-the-badge&logo=latex&logoColor=white)](https://www.latex-project.org/)
-[![Tests](https://img.shields.io/badge/tests-48%20passing-10b981.svg?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/tests-60%20passing-10b981.svg?style=for-the-badge)](tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22d3ee.svg?style=for-the-badge)](https://github.com/TheClazer/CoreTex/pulls)
 
 <p>
@@ -41,14 +41,17 @@ CoreTex is a **compiler-style pipeline** that converts Microsoft Word documents 
 
 |  | Hand re-typing | Pandoc CLI | mammoth.js | **CoreTex** |
 |---|:---:|:---:|:---:|:---:|
-| Equations (OMML) | ✅ | ⚠️ | ❌ | ✅ |
+| Equations (OMML) | ✅ | ⚠️ | ❌ | ✅ (batched) |
+| Unicode math (∈ ℝ X̃ α∇∑) → math mode | ✅ | ❌ | ❌ | ✅ (~140 glyphs) |
 | Tables + alignment | ✅ | ⚠️ | ❌ | ✅ |
 | Citations detected | ⚠️ | ❌ | ❌ | ✅ |
 | IEEE / ACM / Springer templates | ✅ | ❌ | ❌ | ✅ |
+| i18n list detection (FR/DE/ES/IT/PT) | ✅ | ⚠️ | ❌ | ✅ |
 | Compile check + error line | n/a | ❌ | ❌ | ✅ |
 | Overleaf one-click | ❌ | ❌ | ❌ | ✅ |
+| Decompression-bomb hardening | n/a | ❌ | ❌ | ✅ |
 | Web UI | ❌ | ❌ | ❌ | ✅ |
-| Time to convert 20-page paper | ~3 hours | ~10 min¹ | ~10 min¹ | **~8 seconds** |
+| Time to convert 20-page paper | ~3 hours | ~10 min¹ | ~10 min¹ | **~3 seconds** |
 
 <sub>¹ Plus manual cleanup, structural fixes, template porting, etc.</sub>
 
@@ -142,15 +145,15 @@ sequenceDiagram
 
     R-->>W: dequeue
     W->>W: parse_docx → IRDocument
-    W->>W: hydrate equations (Pandoc)
-    W->>W: compress images (Pillow)
-    W->>W: render → LaTeX
-    W->>P: pdflatex compile check
+    W->>W: hydrate equations (1 batched Pandoc call)
+    W->>W: compress images (Pillow, bomb-capped, EXIF preserved)
+    W->>W: render → LaTeX (smart preamble, ~140 unicode math glyphs)
+    W->>P: pdflatex (-no-shell-escape, openin_any=p, 30s)
     P-->>W: (ok, error_line)
-    W->>R: store ConversionResult
+    W->>R: store ConversionResult + per-file figure keys
 
     U->>A: GET /download/{job_id}
-    A->>R: fetch result + figures
+    A->>R: fetch result + assemble zip from figure keys
     A->>R: SETEX temp:{id} TTL=5min
     A-->>U: .tex or .zip + X-Overleaf-Temp-URL
 
@@ -169,13 +172,14 @@ sequenceDiagram
 ### 📝 Content fidelity
 - ✅ Headings H1–H4 → `\section` … `\paragraph`
 - ✅ Bold / italic / underline / monospace runs
-- ✅ Ordered & unordered lists, **nested 3+ levels**
+- ✅ Ordered & unordered lists, **nested 3+ levels**, **6 locales**
 - ✅ Tables with `booktabs` + alignment from `<w:jc>`
 - ✅ Merged cells via `\multicolumn`
-- ✅ Embedded images with `\includegraphics`
+- ✅ Embedded images with `\includegraphics` + EXIF/ICC preserved
 - ✅ Footnotes, hyperlinks, page breaks
-- ✅ OMML equations (inline `$` & display `equation`)
+- ✅ OMML equations (inline `$` & display `equation`) — **single batched Pandoc call**
 - ✅ Word citations → `[CITATION]` warning marker
+- ✅ **~140 Unicode math glyphs** auto-converted (ℝ ∈ ∑ ∇ α β X̃ x̂ ⁿᵇⁱ etc.)
 
 </td>
 <td width="50%" valign="top">
@@ -187,13 +191,14 @@ sequenceDiagram
 - 📘 **Springer LNCS** — `llncs`
 
 ### 🔐 Production-grade
-- ✅ MIME magic-byte validation
-- ✅ 20 MB hard upload cap
-- ✅ Rate limiting (slowapi, 10 req/min/IP)
-- ✅ In-memory only — uploads never touch disk
-- ✅ Pillow image compression > 2 MB
-- ✅ TeX Live compile check with error line
-- ✅ CORS-locked production config
+- ✅ MIME magic-byte validation + **streaming-cap upload** (no OOM)
+- ✅ 20 MB hard upload cap, 10 req/min/IP rate limit
+- ✅ Pillow image compression with **40 MP decompression-bomb cap**
+- ✅ EXIF + ICC profile preservation through re-encode
+- ✅ pdflatex with `-no-shell-escape` + `openin_any=p` + 30 s timeout
+- ✅ TeX Live compile check with error line back-to-CodeMirror
+- ✅ **No `pickle` on the wire** — Redis stores raw bytes only
+- ✅ Explicit CORS allowlist (no wildcard + credentials footgun)
 
 </td>
 </tr>
@@ -201,7 +206,7 @@ sequenceDiagram
 <td width="50%" valign="top">
 
 ### 🪐 Smart preamble injection
-The renderer walks the IR and **only emits the packages the document actually uses** — `graphicx` for images, `amsmath` for equations, `hyperref` for links, `booktabs` for tables, `enumitem` for lists. No bloat. No conflicts.
+The renderer walks the IR and **only emits the packages the document actually uses** — `graphicx` for images, `amsmath` + `amssymb` for equations *or* Unicode math glyphs (`ℝ`, `∇`, `X̃`…), `hyperref` for links, `booktabs` for tables, `enumitem` for lists. No bloat. No conflicts. No "unused package" warnings.
 
 </td>
 <td width="50%" valign="top">
@@ -246,7 +251,8 @@ Open <http://localhost:5173>, drop a `.docx`, pick a template, hit **Convert →
 ### Running the tests
 
 ```bash
-# Backend — 48 unit + integration tests
+# Backend — 60 unit + integration tests (escape, parser, renderer,
+# golden-doc regression on 16 .docx fixtures, HTTP integration)
 pytest tests/ -v
 
 # Frontend — Vitest + tsc
@@ -282,9 +288,9 @@ Base URL: `http://localhost:8000` (dev) · your Railway domain (prod)
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/convert?template=<article\|ieee\|acm\|springer>` | Upload `.docx`, returns `{job_id, status: "queued"}` |
-| `GET` | `/status/{job_id}` | Polled every 2 s. Returns `{status, result_summary?}` |
+| `GET` | `/status/{job_id}` | Polled every 2 s. Returns `{status, result_summary?}` with citation/warning counts, compile error line. |
 | `GET` | `/download/{job_id}` | `.tex` (text/plain) or `.zip` (with `figures/`). Adds `X-Overleaf-Temp-URL` header. |
-| `GET` | `/temp/{job_id}` | Public 5-min snip URL — Overleaf's `snip_uri` target |
+| `GET` | `/temp/{job_id}[.tex\|.zip]` | Public 5-min snip URL — Overleaf's `snip_uri` target. Suffix lets Overleaf detect the type from the URL. |
 
 <details>
 <summary><b>Example: full conversion flow</b></summary>
@@ -389,19 +395,50 @@ The parser writes IR; the renderer reads IR. If anyone renames a field mid-proje
 Mapping `pdflatex` errors back through the IR to the original Word paragraph is **extremely** complex (LaTeX line numbers don't correspond to IR node indices). Practical alternative: surface the LaTeX line number in the warnings panel and have CodeMirror scroll to + highlight it. Users can fix there or open the document in Overleaf.
 </details>
 
+<details>
+<summary><b>Why convert Unicode math glyphs at the escape layer instead of in math mode upstream?</b></summary>
+
+Authors paste characters like `ℝ`, `∈`, `X̃`, `α∇∑` into normal text runs without ever opening Word's equation editor. Those characters reach the parser as paragraph text — not as `<m:oMath>` — so the equation handler never sees them. Catching them at the escape layer means a single pass over every text string is enough; consecutive glyphs merge into a single `$…$` region with `^a^b^c` → `^{abc}` grouping so `pdflatex` doesn't raise "double superscript".
+
+The renderer also detects when any text run contains a math glyph and auto-injects `\usepackage{amssymb}` so `\mathbb{R}` resolves. Documents without math glyphs don't pull in the package.
+</details>
+
+<details>
+<summary><b>Why batch all equations through a single Pandoc call?</b></summary>
+
+Pandoc's startup cost is ~400 ms on a warm machine. A paper with 150 equations would block the worker for **~60 seconds** if each fired its own subprocess. We instead synthesize a single `.docx` with N paragraphs (one per equation), each sandwiched between unique ASCII sentinels, then call Pandoc once and split the output back into per-equation chunks by regex. A 150-equation paper converts in ~0.6 s.
+</details>
+
+<details>
+<summary><b>Why raw bytes in Redis instead of pickled artefacts?</b></summary>
+
+`pickle.loads` on untrusted Redis data is an RCE primitive. Even though Redis is internal, treating that boundary as trusted is the same mistake that broke a thousand other systems. Each figure is stored as a separate raw-byte key (`figures:{job_id}:f:{name}`) alongside a newline-delimited manifest of filenames. No Python-specific wrapper, no deserialisation risk, and individual figures can be looked up without loading the whole dict.
+</details>
+
 ---
 
 ## ⚠️ Known Limitations (v1)
 
+### Content
 | Area | Limitation | Tracked in |
 |---|---|---|
 | Citations | Plain-text fallback, no `.bib` generation | v2 roadmap |
 | Tables | Merged-cell rendering uses `\multicolumn` only (no row spans) | v2 roadmap |
 | Equations | Requires Pandoc on PATH; failures degrade to a placeholder + warning | bible §6 |
 | Compile errors | LaTeX line number is surfaced; no back-mapping to original Word paragraph | bible §6 |
-| File size | Hard 20 MB upload cap (Railway free-tier RAM budget) | bible §7 |
 | Tracked changes | Revision markup stripped; final text only | bible §9 |
 | Resume-style layouts | Per-word formatting + tabs produce verbose output | bible §9 |
+
+### Scaling (deliberate v1 trade-offs for free-tier hosting)
+| Area | Trade-off | Upgrade path |
+|---|---|---|
+| Upload size | Hard 20 MB cap | Set `MAX_FILE_SIZE_MB`; bump Railway RAM |
+| Worker count | Single RQ worker → head-of-line blocking under load | Railway Pro + worker replicas |
+| Figure storage | Staged in Redis (5-min TTL, ~50 MB ceiling) | Swap for S3 / Cloudflare R2 (~30 lines) |
+| Upload memory | ~5× duplication at peak (HTTP → buffer → RQ → Redis → worker) | Presigned PUT to S3, pass key through RQ |
+| TeX Live image | 1.5 GB Docker layer; ~30 s cold start | Pre-warm with min-replicas, or `INSTALL_TEXLIVE=0` |
+
+See [DEPLOY.md → Scaling constraints](DEPLOY.md#scaling-constraints-known-v1-limits) for the full upgrade-path discussion.
 
 Full feature scope (v1 vs v2) lives in `word_latex_bible.pdf §9`.
 
@@ -416,18 +453,29 @@ gantt
     axisFormat %b
 
     section v1 (shipped)
-    IR schema freeze          :done, 2026-01-01, 7d
-    Parser + Renderer         :done, 2026-01-08, 14d
-    Handlers + Templates      :done, 2026-01-22, 14d
-    Compile check + UI        :done, 2026-02-05, 14d
-    Deploy + Docs             :done, 2026-02-19, 7d
+    IR schema freeze              :done, 2026-01-01, 7d
+    Parser + Renderer             :done, 2026-01-08, 14d
+    Handlers + Templates          :done, 2026-01-22, 14d
+    Compile check + UI            :done, 2026-02-05, 14d
+    Deploy + Docs                 :done, 2026-02-19, 7d
+
+    section v1.1 (shipped — hardening)
+    Unicode math escape (~140)    :done, 2026-03-01, 5d
+    Combining diacritics          :done, 2026-03-06, 2d
+    Batched Pandoc                :done, 2026-03-08, 2d
+    Pillow bomb cap + EXIF        :done, 2026-03-10, 1d
+    pdflatex sandbox flags        :done, 2026-03-11, 1d
+    i18n list detection (6 locales) :done, 2026-03-12, 2d
+    Redis raw-byte figures        :done, 2026-03-14, 1d
 
     section v2 (planned)
-    Full BibTeX extraction    :2026-03-01, 21d
-    Beamer slides template    :2026-03-22, 14d
-    Direct OMML parser        :2026-04-05, 21d
-    Run-merger optimisation   :2026-04-26, 7d
-    Style mapping config      :2026-05-03, 14d
+    Full BibTeX extraction        :2026-04-01, 21d
+    Beamer slides template        :2026-04-22, 14d
+    Direct OMML parser            :2026-05-06, 21d
+    Run-merger optimisation       :2026-05-27, 7d
+    Style mapping config          :2026-06-03, 14d
+    S3 / R2 figure storage        :2026-06-17, 7d
+    Worker autoscale on Railway   :2026-06-24, 5d
 ```
 
 ---
