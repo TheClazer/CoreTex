@@ -92,7 +92,7 @@ def test_unicode_paragraph_survives():
 
 def test_all_golden_docs_parse_cleanly():
     """Every .docx in tests/golden/ must parse without exceptions."""
-    docs = sorted(GOLDEN_DIR.glob("*.docx"))
+    docs = sorted(p for p in GOLDEN_DIR.glob("*.docx") if not p.name.startswith("~$"))
     assert docs, "no golden docs available"
     for path in docs:
         result = parse_docx(path.read_bytes())

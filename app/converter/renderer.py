@@ -16,7 +16,7 @@ from typing import Iterable, List
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
-from app.converter.escape import escape_latex, escape_url
+from app.converter.escape import escape_latex, escape_url, has_math_glyphs
 from app.converter.handlers.table_handler import column_spec, total_columns
 from app.converter.ir_schema import (
     CitationNode,
@@ -215,27 +215,51 @@ def _required_packages(doc: IRDocument) -> List[str]:
     has_table = False
     has_list = False
     has_footnote = False
+    has_math_unicode = False
+
+    def _runs_have_math(runs):
+        return any(has_math_glyphs(r.text) for r in runs)
 
     def visit(node):
         nonlocal has_eq, has_link, has_img, has_table, has_list, has_footnote
+        nonlocal has_math_unicode
         if isinstance(node, EquationNode):
             has_eq = True
         elif isinstance(node, HyperlinkNode):
             has_link = True
+            if _runs_have_math(node.runs):
+                has_math_unicode = True
         elif isinstance(node, ImageNode):
             has_img = True
         elif isinstance(node, TableNode):
             has_table = True
+            for row in node.rows:
+                for cell in row.cells:
+                    if _runs_have_math(cell.runs):
+                        has_math_unicode = True
         elif isinstance(node, ListNode):
             has_list = True
+
+            def walk_items(items):
+                nonlocal has_math_unicode
+                for it in items:
+                    if _runs_have_math(it.runs):
+                        has_math_unicode = True
+                    walk_items(it.sub_items)
+            walk_items(node.items)
         elif isinstance(node, FootnoteNode):
             has_footnote = True
+            if _runs_have_math(node.runs):
+                has_math_unicode = True
+        elif isinstance(node, (ParagraphNode, HeadingNode)):
+            if _runs_have_math(node.runs):
+                has_math_unicode = True
 
     for node in doc.nodes:
         visit(node)
 
     pkgs: List[str] = ["\\usepackage[utf8]{inputenc}", "\\usepackage[margin=1in]{geometry}"]
-    if has_eq:
+    if has_eq or has_math_unicode:
         pkgs.append("\\usepackage{amsmath}")
         pkgs.append("\\usepackage{amssymb}")
     if has_link:

@@ -66,3 +66,70 @@ def test_url_escape_keeps_slashes_and_colon():
 
 def test_url_escape_percent_and_hash():
     assert escape_url("https://x.com/a%20b#frag") == r"https://x.com/a\%20b\#frag"
+
+
+# ── Unicode math glyph tests ───────────────────────────────────────────
+
+def test_blackboard_R_becomes_math_mode():
+    # Spaces between glyphs keep the math regions separate. Adjacent
+    # glyphs merge (see test_adjacent_math_glyphs_are_merged).
+    assert escape_latex("X ∈ ℝ") == r"X $\in$ $\mathbb{R}$"
+
+
+def test_adjacent_math_glyphs_are_merged():
+    """ℝᵇˣⁿˣᵈ should collapse to one math region with grouped superscripts."""
+    out = escape_latex("ℝᵇˣⁿˣᵈ")
+    # exactly one opening $ and one closing $
+    assert out.count("$") == 2
+    assert r"\mathbb{R}" in out
+    # super/subscript chars are grouped into a single ^{...} so pdflatex
+    # doesn't raise "double superscript".
+    assert "^{bxnxd}" in out
+
+
+def test_consecutive_subscripts_grouped():
+    out = escape_latex("x₁₂₃")
+    assert "_{123}" in out
+    assert "^" not in out
+
+
+def test_greek_letters_render_as_math():
+    out = escape_latex("α + β = γ")
+    assert r"\alpha" in out
+    assert r"\beta" in out
+    assert r"\gamma" in out
+    # the + sign is just text, so it sits between math regions
+    assert "$" in out
+
+
+def test_set_operators():
+    out = escape_latex("A ⊆ B ∪ C")
+    assert r"\subseteq" in out
+    assert r"\cup" in out
+
+
+def test_comparison_operators():
+    assert "≤" not in escape_latex("a ≤ b")
+    assert r"\leq" in escape_latex("a ≤ b")
+    assert r"\neq" in escape_latex("x ≠ y")
+    assert r"\approx" in escape_latex("π ≈ 3.14")
+
+
+def test_subscripts_and_superscripts():
+    out = escape_latex("x₁² + x₂² = r²")
+    assert "_1" in out and "^2" in out and "_2" in out
+
+
+def test_infinity_and_calculus():
+    out = escape_latex("∫₀^∞ f(x) dx")
+    assert r"\int" in out
+    assert r"\infty" in out
+
+
+def test_has_math_glyphs():
+    from app.converter.escape import has_math_glyphs
+
+    assert has_math_glyphs("X ∈ ℝ")
+    assert has_math_glyphs("α")
+    assert not has_math_glyphs("plain ASCII text")
+    assert not has_math_glyphs("—curly quotes “like these”")

@@ -139,7 +139,7 @@ def test_all_templates_wrap_document(template):
 
 
 def test_all_golden_docs_render_to_latex():
-    docs = sorted(GOLDEN_DIR.glob("*.docx"))
+    docs = sorted(p for p in GOLDEN_DIR.glob("*.docx") if not p.name.startswith("~$"))
     assert docs
     for path in docs:
         ir = parse_docx(path.read_bytes())
