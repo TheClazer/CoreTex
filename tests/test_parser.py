@@ -99,3 +99,16 @@ def test_all_golden_docs_parse_cleanly():
         assert isinstance(result, IRDocument), f"{path.name} produced non-IR"
         # Body must not be empty.
         assert result.nodes, f"{path.name} produced zero nodes"
+
+
+def test_zip_bomb_rejected():
+    import io
+    import zipfile
+    huge = b'A' * (300 * 1024 * 1024)  # 300 MB uncompressed
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('word/document.xml', huge)
+    bomb = buf.getvalue()
+    assert bomb.startswith(b'PK')
+    with pytest.raises(ValueError, match='zip'):
+        parse_docx(bomb)

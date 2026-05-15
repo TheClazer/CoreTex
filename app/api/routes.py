@@ -1,5 +1,5 @@
 import logging
-import uuid
+import secrets
 import zipfile
 from io import BytesIO
 from typing import Literal
@@ -8,16 +8,13 @@ from fastapi import APIRouter, UploadFile, File, Query, HTTPException, Request, 
 from fastapi.responses import StreamingResponse
 from rq.job import Job
 from rq.exceptions import NoSuchJobError
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.queue.worker import redis_conn, conversion_queue, run_conversion
 from app.converter.ir_schema import ConversionResult
 from app.config import settings
+from app.rate_limit import limiter
 
-# Configure router and local rate limiter
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +51,10 @@ async def convert_document(
     if not contents.startswith(b'PK\x03\x04'):
         raise HTTPException(status_code=400, detail="Invalid file type. Must be a .docx file.")
         
-    job_id = str(uuid.uuid4())
+    # 22-char URL-safe token (≈ 128 bits of entropy). uuid4 was fine
+    # cryptographically — uses os.urandom() under the hood — but
+    # secrets.token_urlsafe is the more idiomatic, intent-revealing API.
+    job_id = secrets.token_urlsafe(16)
     
     # Enqueue job to RQ
     conversion_queue.enqueue(
@@ -152,8 +152,12 @@ async def download_result(job_id: str):
                 if blob:
                     figures[name] = blob
         zip_bytes = zip_output(result, figures).getvalue()
-        redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, zip_bytes)
-        redis_conn.setex(f"temp:{job_id}:type", settings.TEMP_URL_TTL_SECONDS, "zip")
+        # Single key with a 4-byte type prefix eliminates the two-get race:
+        # if the TTL expires between the content and type lookups, /temp
+        # would decode a zip as utf-8 and 500. One key = atomic visibility.
+        redis_conn.setex(
+            f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, b"ZIP:" + zip_bytes
+        )
 
         return StreamingResponse(
             BytesIO(zip_bytes),
@@ -164,9 +168,13 @@ async def download_result(job_id: str):
             },
         )
 
-    # Image-free path: cache the raw .tex for Overleaf.
-    redis_conn.setex(f"temp:{job_id}", settings.TEMP_URL_TTL_SECONDS, result.latex_source)
-    redis_conn.setex(f"temp:{job_id}:type", settings.TEMP_URL_TTL_SECONDS, "tex")
+    # Image-free path: cache the raw .tex for Overleaf, prefixed so /temp
+    # can disambiguate from zip without a second Redis lookup.
+    redis_conn.setex(
+        f"temp:{job_id}",
+        settings.TEMP_URL_TTL_SECONDS,
+        b"TEX:" + result.latex_source.encode("utf-8"),
+    )
     return Response(
         content=result.latex_source,
         media_type='text/plain',
@@ -200,22 +208,20 @@ async def get_temp_overleaf(job_id: str):
             status_code=404,
             detail="Temp file expired. Re-run conversion to get a new Overleaf link.",
         )
-    kind = redis_conn.get(f"temp:{job_id}:type")
-    kind = kind.decode("ascii") if isinstance(kind, (bytes, bytearray)) else (kind or "tex")
 
-    if kind == "zip":
+    # Type tag is folded into the value as a 4-byte prefix — no race window.
+    if cached.startswith(b"ZIP:"):
         return Response(
-            content=cached,
+            content=cached[4:],
             media_type="application/zip",
             headers={
                 "Cache-Control": "no-store",
                 "Content-Disposition": 'inline; filename="output.zip"',
             },
         )
-    # .tex content must be served with a LaTeX-aware Content-Type and a
-    # filename ending in .tex so Overleaf's snip_uri import recognises it.
+    payload = cached[4:] if cached.startswith(b"TEX:") else cached
     return Response(
-        content=cached.decode("utf-8"),
+        content=payload.decode("utf-8"),
         media_type="application/x-tex",
         headers={
             "Cache-Control": "no-store",

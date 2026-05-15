@@ -154,3 +154,16 @@ def test_combining_hat_and_bar():
     assert "\\hat{x}" in escape_latex("x̂")
     assert "\\bar{y}" in escape_latex("ȳ")
     assert "\\vec{v}" in escape_latex("v⃗")
+
+
+def test_combining_on_greek_base():
+    out = escape_latex(chr(0x3B1) + chr(0x303))
+    assert r"\tilde{\alpha}" in out
+    assert chr(0x303) not in out
+
+
+def test_multiple_diacritics_nest():
+    out = escape_latex(chr(0x58) + chr(0x303) + chr(0x302))
+    assert r"\hat{\tilde{X}}" in out
+    assert chr(0x303) not in out
+    assert chr(0x302) not in out
