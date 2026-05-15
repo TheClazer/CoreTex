@@ -146,18 +146,41 @@ _COMBINING_ACCENT = {
     "⃑": "overrightarrow",  # X⃑
 }
 
+# Use a broad Unicode-letter class so combining marks attach correctly to
+# Greek (α, β…), Cyrillic, accented Latin, etc. — not just A-Za-z0-9.
+# `\w` won't do — that omits Greek script in some builds. We use the explicit
+# letter category via the `\p{L}` analogue: match "any character that is not
+# a combining mark itself, then one or more combining marks".
+_COMBINING_PATTERN = "|".join(re.escape(c) for c in _COMBINING_ACCENT)
 _COMBINING_RE = re.compile(
-    r"([A-Za-z0-9])(" + "|".join(re.escape(c) for c in _COMBINING_ACCENT) + ")"
+    r"([^\s\\{}$_^])((?:" + _COMBINING_PATTERN + r")+)"
 )
 
 
 def _apply_combining_accents(text: str) -> str:
+    """Wrap base+combining sequences in math accent commands.
+
+    Handles:
+    - Greek + accent: α̃ → $\\tilde{\\alpha}$  (via secondary pass below)
+    - Multiple marks: X̃̂ → $\\hat{\\tilde{X}}$ (nesting in order of appearance)
+    - Latin + accent: X̃ → $\\tilde{X}$
+    """
     def sub(m: re.Match[str]) -> str:
-        base, mark = m.group(1), m.group(2)
-        cmd = _COMBINING_ACCENT[mark]
-        # Emit using our math sentinels so the surrounding pipeline wraps it
-        # in $...$ and merges with adjacent math content.
-        return f"{_MATH_OPEN}\\{cmd}{{{base}}}{_MATH_CLOSE}"
+        base = m.group(1)
+        marks = m.group(2)
+        # If the base is itself a Unicode math glyph (e.g. Greek α), expand
+        # it inline so the subsequent _UNICODE_MATH pass doesn't double-wrap.
+        if base in _UNICODE_MATH:
+            inner: str = _UNICODE_MATH[base]
+        else:
+            inner = base
+        # Nest accents in source order: first mark becomes innermost wrapper.
+        for mark in marks:
+            cmd = _COMBINING_ACCENT.get(mark)
+            if cmd is None:
+                continue
+            inner = f"\\{cmd}{{{inner}}}"
+        return f"{_MATH_OPEN}{inner}{_MATH_CLOSE}"
 
     return _COMBINING_RE.sub(sub, text)
 

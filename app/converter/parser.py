@@ -147,7 +147,34 @@ def _build_runs(paragraph: Paragraph) -> List[RunNode]:
 
 
 def _has_page_break(paragraph: Paragraph) -> bool:
-    return paragraph._p.find(f".//{qn('w:br')}[@{qn('w:type')}='page']") is not None
+    # Inline page break: <w:br w:type="page"/>
+    if paragraph._p.find(f".//{qn('w:br')}[@{qn('w:type')}='page']") is not None:
+        return True
+    # Paragraph property: <w:pageBreakBefore/> — break BEFORE this paragraph.
+    pPr = paragraph._p.find(qn("w:pPr"))
+    if pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None:
+        return True
+    return False
+
+
+def _paragraph_breaks_before(paragraph: Paragraph) -> bool:
+    """True when this paragraph should be preceded by \\newpage."""
+    pPr = paragraph._p.find(qn("w:pPr"))
+    if pPr is None:
+        return False
+    return pPr.find(qn("w:pageBreakBefore")) is not None
+
+
+def _section_break_after(sectPr_elem) -> bool:
+    """A sectPr with <w:type w:val="nextPage"/> (or missing) starts a new page."""
+    if sectPr_elem is None:
+        return False
+    sect_type = sectPr_elem.find(qn("w:type"))
+    if sect_type is None:
+        # OOXML default for section break is nextPage.
+        return True
+    val = sect_type.get(qn("w:val"))
+    return val in (None, "nextPage", "oddPage", "evenPage")
 
 
 # ---------------------------------------------------------------------------
@@ -419,12 +446,31 @@ def _extract_footnote_refs(paragraph: Paragraph, footnotes: dict) -> List[Footno
 # Images
 # ---------------------------------------------------------------------------
 
-def _extract_images(paragraph: Paragraph, docx_zip: zipfile.ZipFile, counter: list[int]) -> List[ImageNode]:
+def _extract_images(
+    paragraph: Paragraph,
+    docx_zip: zipfile.ZipFile,
+    counter: list[int],
+    warnings: list[str],
+) -> List[ImageNode]:
     out: List[ImageNode] = []
     blips = paragraph._p.findall(f".//{qn('a:blip')}")
     for blip in blips:
         rid = blip.get(qn("r:embed"))
         if not rid:
+            # r:link → externally linked image (URL on the author's machine).
+            # We can't fetch it from the .docx zip; warn so the user knows the
+            # figure went missing instead of silently dropping it.
+            link_rid = blip.get(qn("r:link"))
+            if link_rid:
+                try:
+                    target = paragraph.part.rels[link_rid].target_ref
+                except KeyError:
+                    target = "(unknown URL)"
+                warnings.append(
+                    f"External image link skipped (Word's r:link is not embedded "
+                    f"in the .docx): {target}. Re-insert the image with "
+                    f"'Insert as Embedded' in Word, then re-convert."
+                )
             continue
         try:
             rel = paragraph.part.rels[rid]
@@ -448,14 +494,14 @@ def _extract_images(paragraph: Paragraph, docx_zip: zipfile.ZipFile, counter: li
 # Tables
 # ---------------------------------------------------------------------------
 
-def _parse_cell(cell: _Cell) -> TableCellNode:
+def _parse_cell(cell: _Cell, row_idx: int, col_idx: int, all_rows: list) -> TableCellNode:
     runs: List[RunNode] = []
     align = TextAlign.LEFT
     for p in cell.paragraphs:
         if align == TextAlign.LEFT:
             align = _paragraph_alignment(p)
         runs.extend(_build_runs(p))
-    # Detect spans
+
     tcPr = cell._tc.find(qn("w:tcPr"))
     col_span = 1
     row_span = 1
@@ -468,15 +514,33 @@ def _parse_cell(cell: _Cell) -> TableCellNode:
                 col_span = 1
         vMerge = tcPr.find(qn("w:vMerge"))
         if vMerge is not None and vMerge.get(qn("w:val")) == "restart":
-            row_span = 2  # heuristic; refined below
+            # Count how many subsequent rows have <w:vMerge/> (no val attr =
+            # "continue") in the same column position. OOXML §17.4.84.
+            row_span = 1
+            for next_row in all_rows[row_idx + 1:]:
+                if col_idx >= len(next_row.cells):
+                    break
+                next_tc = next_row.cells[col_idx]._tc
+                next_tcPr = next_tc.find(qn("w:tcPr"))
+                if next_tcPr is None:
+                    break
+                next_vMerge = next_tcPr.find(qn("w:vMerge"))
+                if next_vMerge is None:
+                    break
+                # `continue` is encoded as <w:vMerge/> with no val OR val="continue".
+                val = next_vMerge.get(qn("w:val"))
+                if val and val != "continue":
+                    break
+                row_span += 1
     return TableCellNode(runs=runs, col_span=col_span, row_span=row_span, alignment=align)
 
 
 def _parse_table(table: Table) -> TableNode:
     rows: List[TableRowNode] = []
     col_count = 0
-    for idx, row in enumerate(table.rows):
-        cells = [_parse_cell(c) for c in row.cells]
+    all_rows = list(table.rows)
+    for idx, row in enumerate(all_rows):
+        cells = [_parse_cell(c, idx, c_idx, all_rows) for c_idx, c in enumerate(row.cells)]
         col_count = max(col_count, sum(c.col_span for c in cells))
         # First row is treated as header unless the table only has one row.
         is_header = idx == 0 and len(table.rows) > 1
@@ -500,14 +564,53 @@ def _parse_table(table: Table) -> TableNode:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
+_MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MB hard ceiling
+_MAX_UNCOMPRESSED_PER_FILE = 100 * 1024 * 1024  # 100 MB per entry
+_MAX_ENTRIES = 5_000
+
+
+def _assert_zip_safe(docx_bytes: bytes) -> None:
+    """Reject zip bombs before any XML hits the parser.
+
+    A .docx is a zip archive. A maliciously crafted 20 MB upload can carry a
+    document.xml that decompresses to multiple gigabytes — enough to OOM-kill
+    the worker the instant lxml tries to load it. We inspect the central
+    directory (cheap; no decompression) and refuse files whose declared
+    uncompressed size, per-entry or aggregate, exceeds sane ceilings.
+    """
+    with zipfile.ZipFile(BytesIO(docx_bytes)) as zf:
+        infos = zf.infolist()
+        if len(infos) > _MAX_ENTRIES:
+            raise ValueError(
+                f"Refusing zip with {len(infos)} entries (max {_MAX_ENTRIES})"
+            )
+        total = 0
+        for info in infos:
+            if info.file_size > _MAX_UNCOMPRESSED_PER_FILE:
+                raise ValueError(
+                    f"Refusing zip entry '{info.filename}' "
+                    f"({info.file_size:,} B uncompressed; cap "
+                    f"{_MAX_UNCOMPRESSED_PER_FILE:,})"
+                )
+            total += info.file_size
+            if total > _MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"Refusing zip: cumulative uncompressed payload exceeds "
+                    f"{_MAX_UNCOMPRESSED_BYTES:,} B (possible zip bomb)"
+                )
+
+
 def parse_docx(docx_bytes: bytes) -> IRDocument:
     """Parse a .docx file's bytes into an IRDocument.
 
     Raises:
-        ValueError: when the bytes are not a valid OOXML zip.
+        ValueError: when the bytes are not a valid OOXML zip, or when the
+            zip would decompress beyond the safety ceiling.
     """
     if not docx_bytes.startswith(b"PK\x03\x04"):
         raise ValueError("Not a valid .docx (missing PK zip magic bytes)")
+
+    _assert_zip_safe(docx_bytes)
 
     doc: DocxDocument = Document(BytesIO(docx_bytes))
     docx_zip = zipfile.ZipFile(BytesIO(docx_bytes))
@@ -536,6 +639,14 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
 
         if tag == "p":
             p = Paragraph(child, doc)
+
+            # w:pageBreakBefore in paragraph properties → \newpage BEFORE this
+            # paragraph. Insert the page break first, then continue processing
+            # the paragraph's content normally.
+            if _paragraph_breaks_before(p):
+                flush_list()
+                nodes.append(PageBreakNode())
+
             info = _list_info(p)
             if info is not None:
                 num_id, ilvl = info
@@ -550,7 +661,7 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
 
             flush_list()
 
-            # Page break-only paragraph
+            # Page break-only paragraph (inline <w:br w:type="page"/>)
             if _has_page_break(p) and not p.text.strip():
                 nodes.append(PageBreakNode())
                 continue
@@ -567,7 +678,7 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
 
             # Block-level extractions that REPLACE a paragraph
             equations = _extract_equations(p)
-            images = _extract_images(p, docx_zip, img_counter)
+            images = _extract_images(p, docx_zip, img_counter, warnings)
             hyperlinks = _extract_hyperlinks(p, doc)
             citations = _extract_citations(p)
             footnote_refs = _extract_footnote_refs(p, footnotes)
@@ -605,6 +716,16 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
                 warnings.append(f"Failed to parse table: {e}")
 
         elif tag == "sectPr":
+            # A body-level sectPr defines the FINAL section break of the
+            # document. Mid-document section breaks are encoded inside the
+            # last paragraph of the previous section via pPr/sectPr — we
+            # handle those by treating nextPage / oddPage / evenPage as a
+            # page break before the next paragraph.
+            if _section_break_after(child):
+                # Only emit if the previous node isn't already a PageBreakNode
+                # (avoids duplicate \newpage at end of document).
+                if not nodes or not isinstance(nodes[-1], PageBreakNode):
+                    nodes.append(PageBreakNode())
             continue
 
     flush_list()

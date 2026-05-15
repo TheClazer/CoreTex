@@ -1,16 +1,13 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.routes import router
 from app.config import settings
-
-# Rate limiter setup
-limiter = Limiter(key_func=get_remote_address)
+from app.rate_limit import limiter
 
 app = FastAPI(
     title='Word to LaTeX Converter',
