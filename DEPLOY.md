@@ -163,6 +163,69 @@ GitHub. To require these checks before merge, in GitHub:
 
 ---
 
+## Part 5 — Enabling user accounts + history (optional)
+
+CoreTex works fully stateless without any of this. Turn it on if you want
+users to be able to sign up, log in, and re-download past conversions.
+
+### 5.1 Add a Postgres database on Railway
+
+1. Project canvas → **+ Create → Database → Add PostgreSQL**
+2. Wait ~30 s for it to provision
+3. Open the Postgres tile → **Variables tab** → copy `DATABASE_URL`
+
+### 5.2 Wire env vars on the API + worker services
+
+On **both** `coretex-api` and the worker service, **Variables** tab → add:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` *(autocomplete-suggested)* |
+| `JWT_SECRET` | a random hex string — generate with `openssl rand -hex 32` |
+| `JWT_EXPIRES_HOURS` | `168` *(7 days; tune to taste)* |
+| `FRONTEND_URL` | your Vercel URL, e.g. `https://core-tex.vercel.app` |
+| `OAUTH_REDIRECT_BASE` | your Railway URL, e.g. `https://coretex-production.up.railway.app` |
+
+Tables are created automatically on first boot (`Base.metadata.create_all`).
+
+→ **You:** restart both services or push any commit to trigger a redeploy.
+Visit `/` on the API — you should now see `"features": { "auth": true, "history": true, ... }` in the JSON response.
+
+### 5.3 (Optional) Add Google sign-in
+
+→ **You:** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+
+1. **Create project** → name it CoreTex
+2. **APIs & Services → OAuth consent screen** → External → fill app name + support email
+3. **APIs & Services → Credentials → + Create Credentials → OAuth client ID**
+   - Application type: **Web application**
+   - Authorised redirect URIs:
+     - `http://localhost:8000/auth/google/callback` (dev)
+     - `https://<your-railway-domain>/auth/google/callback` (prod)
+4. Copy the **Client ID** and **Client secret**
+5. Railway → API service → Variables:
+   - `GOOGLE_OAUTH_CLIENT_ID` = (paste client ID)
+   - `GOOGLE_OAUTH_CLIENT_SECRET` = (paste client secret)
+6. Redeploy. The Google button appears on `/login` automatically.
+
+### 5.4 (Optional) Add GitHub sign-in
+
+→ **You:** in [GitHub Developer settings](https://github.com/settings/developers):
+
+1. **OAuth Apps → New OAuth App**
+2. Application name: CoreTex
+3. Homepage URL: your Vercel URL
+4. Authorization callback URL: `https://<your-railway-domain>/auth/github/callback`
+5. Register → click **Generate a new client secret**
+6. Railway → API service → Variables:
+   - `GITHUB_OAUTH_CLIENT_ID` = (paste client ID)
+   - `GITHUB_OAUTH_CLIENT_SECRET` = (paste client secret)
+7. Redeploy. The GitHub button appears on `/login`.
+
+> ⚠️ GitHub requires a verified primary email or the callback redirects to `?error=github_email_required`. Most users have one; tell them to check **Settings → Emails** if they hit this.
+
+---
+
 ## Scaling constraints (known v1 limits)
 
 The v1 deployment is sized for "a few hundred conversions a day on a hobby

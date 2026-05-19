@@ -17,7 +17,7 @@
 [![Docker](https://img.shields.io/badge/Docker-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D.svg?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
 [![LaTeX](https://img.shields.io/badge/LaTeX-008080.svg?style=for-the-badge&logo=latex&logoColor=white)](https://www.latex-project.org/)
-[![Tests](https://img.shields.io/badge/tests-60%20passing-10b981.svg?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/tests-70%20passing-10b981.svg?style=for-the-badge)](tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22d3ee.svg?style=for-the-badge)](https://github.com/TheClazer/CoreTex/pulls)
 
 <p>
@@ -190,6 +190,15 @@ sequenceDiagram
 - 🏢 **ACM SIGCONF** — `acmart`
 - 📘 **Springer LNCS** — `llncs`
 
+### 👤 Accounts + history (v1.2)
+- ✅ Email + password sign-up / sign-in (bcrypt-hashed)
+- ✅ Google + GitHub OAuth (optional, configured via env vars)
+- ✅ **SHA-256 dedup** — re-uploading an identical .docx returns the
+  cached conversion in <100 ms, skipping the full pipeline
+- ✅ Per-user history page with re-download (.zip with figures intact)
+- ✅ JWT bearer tokens (7-day default)
+- ✅ Anonymous usage still allowed — auth is purely additive
+
 ### 🔐 Production-grade
 - ✅ MIME magic-byte validation + **streaming-cap upload** (no OOM)
 - ✅ 20 MB hard upload cap, 10 req/min/IP rate limit
@@ -291,6 +300,16 @@ Base URL: `http://localhost:8000` (dev) · your Railway domain (prod)
 | `GET` | `/status/{job_id}` | Polled every 2 s. Returns `{status, result_summary?}` with citation/warning counts, compile error line. |
 | `GET` | `/download/{job_id}` | `.tex` (text/plain) or `.zip` (with `figures/`). Adds `X-Overleaf-Temp-URL` header. |
 | `GET` | `/temp/{job_id}[.tex\|.zip]` | Public 5-min snip URL — Overleaf's `snip_uri` target. Suffix lets Overleaf detect the type from the URL. |
+| `GET` | `/auth/providers` | Returns which auth methods are configured. |
+| `POST` | `/auth/signup` | `{email, password, display_name?}` → JWT. |
+| `POST` | `/auth/login` | `{email, password}` → JWT. |
+| `GET` | `/auth/me` | Current user (requires Bearer token). |
+| `GET` | `/auth/{google\|github}/start` | 302 → OAuth provider. |
+| `GET` | `/auth/{google\|github}/callback` | OAuth return path; redirects to frontend with `#token=...`. |
+| `GET` | `/history` | List of the user's conversions (paginated). |
+| `GET` | `/history/{id}` | One conversion's metadata + `.tex` + figure filenames. |
+| `GET` | `/history/{id}/download` | Re-download the `.tex` or `.zip`. |
+| `DELETE` | `/history/{id}` | Remove a conversion from history. |
 
 <details>
 <summary><b>Example: full conversion flow</b></summary>

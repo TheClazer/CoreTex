@@ -15,6 +15,9 @@ export interface ConversionState {
   overleafTempUrl: string | null;
   error: string | null;
   elapsedMs: number;
+  /** True when the API short-circuited the conversion pipeline because
+   * this user uploaded the same .docx before. */
+  cached: boolean;
 }
 
 const POLL_MS = 2000;
@@ -30,6 +33,7 @@ const INITIAL: ConversionState = {
   overleafTempUrl: null,
   error: null,
   elapsedMs: 0,
+  cached: false,
 };
 
 export function useConversion() {
@@ -120,9 +124,48 @@ export function useConversion() {
       }, 100);
 
       try {
-        const { job_id } = await uploadDocx(file, template);
-        setState((s) => ({ ...s, jobId: job_id, phase: "polling", status: "queued" }));
-        pollTimer.current = window.setTimeout(() => pollOnce(job_id), POLL_MS);
+        const upload = await uploadDocx(file, template);
+        // Dedup hit: backend already has this (user, hash, template) — skip
+        // polling and immediately request the stored result.
+        if (upload.status === "finished" && upload.cached) {
+          setState((s) => ({
+            ...s,
+            jobId: upload.job_id,
+            phase: "downloading",
+            status: "finished",
+            cached: true,
+          }));
+          // Re-use existing download fetch — but routes /history/{id}/download.
+          try {
+            const { downloadHistoryItem } = await import("../api");
+            const dl = await downloadHistoryItem(upload.conversion_id ?? upload.job_id);
+            setState((s) => ({
+              ...s,
+              phase: "done",
+              texSource: dl.text,
+              downloadBlob: dl.blob,
+              downloadFilename: dl.filename,
+              overleafTempUrl: null,
+              summary: {
+                template,
+                has_images: dl.filename.endsWith(".zip"),
+                warning_count: 0,
+                citation_count: 0,
+                compile_ok: true,
+                compile_error: null,
+                compile_error_line: null,
+                warnings: [],
+              },
+            }));
+          } catch (e) {
+            const msg = e instanceof ApiError ? e.detail : (e as Error).message;
+            setState((s) => ({ ...s, phase: "error", error: msg }));
+          }
+          stopTimers();
+          return;
+        }
+        setState((s) => ({ ...s, jobId: upload.job_id, phase: "polling", status: "queued" }));
+        pollTimer.current = window.setTimeout(() => pollOnce(upload.job_id), POLL_MS);
       } catch (e) {
         const msg = e instanceof ApiError ? e.detail : (e as Error).message;
         setState((s) => ({ ...s, phase: "error", error: msg }));
