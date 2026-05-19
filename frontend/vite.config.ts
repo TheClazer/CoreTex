@@ -10,6 +10,8 @@ export default defineConfig({
       "/status": "http://localhost:8000",
       "/download": "http://localhost:8000",
       "/temp": "http://localhost:8000",
+      "/auth": "http://localhost:8000",
+      "/history": "http://localhost:8000",
     },
   },
   test: {

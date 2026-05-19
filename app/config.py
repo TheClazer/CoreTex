@@ -15,6 +15,31 @@ class Settings(BaseSettings):
     #   ALLOWED_ORIGINS=https://coretex.vercel.app,https://staging.coretex.app
     ALLOWED_ORIGINS: str = ""
 
+    # ── Postgres (Railway provides ${{Postgres.DATABASE_URL}}) ──────────
+    # When empty, auth + history features are disabled and CoreTex still
+    # works as a stateless converter. Setting it activates the user system.
+    DATABASE_URL: str = ""
+
+    # ── Auth ────────────────────────────────────────────────────────────
+    # Use `openssl rand -hex 32` to generate. NEVER commit; set as env var.
+    JWT_SECRET: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRES_HOURS: int = 24 * 7  # 7 days
+
+    # OAuth provider credentials. Leave empty to disable that provider's
+    # button on the frontend; the rest of the app keeps working.
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+
+    # Base URL the OAuth callback redirects to after provider sign-in.
+    # In prod: https://<railway-domain>/auth/<provider>/callback
+    OAUTH_REDIRECT_BASE: str = "http://localhost:8000"
+    # Where the backend bounces the browser to after a successful OAuth
+    # callback (frontend URL). Token is appended as ?token=...
+    FRONTEND_URL: str = "http://localhost:5173"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

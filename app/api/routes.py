@@ -1,14 +1,20 @@
+import hashlib
 import logging
 import secrets
 import zipfile
 from io import BytesIO
-from typing import Literal
+from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, UploadFile, File, Query, HTTPException, Request, Response
+from fastapi import APIRouter, UploadFile, File, Query, HTTPException, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from rq.job import Job
 from rq.exceptions import NoSuchJobError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.auth import current_user_optional
+from app.db import db_enabled
+from app.models import Conversion, User
 from app.queue.worker import redis_conn, conversion_queue, run_conversion
 from app.converter.ir_schema import ConversionResult
 from app.config import settings
@@ -18,16 +24,25 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _maybe_get_db() -> Optional[Session]:
+    """Open a DB session if DATABASE_URL is configured, else None."""
+    if not db_enabled():
+        return None
+    from app.db import get_session_factory  # local import to avoid cycle
+    factory = get_session_factory()
+    return factory() if factory is not None else None
+
+
 @router.post("/convert")
 @limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def convert_document(
     request: Request,
     file: UploadFile = File(...),
-    template: Literal['article', 'ieee', 'acm', 'springer'] = Query('article')
+    template: Literal['article', 'ieee', 'acm', 'springer'] = Query('article'),
+    user: Annotated[Optional[User], Depends(current_user_optional)] = None,
 ):
-    """
-    Endpoint 1: Upload a .docx file and enqueue a conversion job.
-    """
+    """Upload a .docx file and either return a cached result (auth + dedup hit)
+    or enqueue a fresh conversion job."""
     logger.info(f"Received convert request from {request.client.host if request.client else 'unknown'}")
 
     # Stream into memory with a hard size cap so a hostile upload cannot OOM
@@ -50,19 +65,50 @@ async def convert_document(
     # Magic-byte check: .docx files are zip archives starting with PK\x03\x04
     if not contents.startswith(b'PK\x03\x04'):
         raise HTTPException(status_code=400, detail="Invalid file type. Must be a .docx file.")
-        
+
+    # ── Hash-based dedup (authenticated only) ───────────────────────────
+    # If this user has already converted byte-for-byte the same .docx with
+    # the same template before, return the stored conversion immediately
+    # instead of re-running the pipeline.
+    docx_sha256 = hashlib.sha256(contents).digest()
+    if user is not None:
+        db = _maybe_get_db()
+        if db is not None:
+            try:
+                cached = db.scalar(
+                    select(Conversion).where(
+                        Conversion.user_id == user.id,
+                        Conversion.docx_sha256 == docx_sha256,
+                        Conversion.template == template,
+                    )
+                )
+                if cached is not None:
+                    logger.info("Dedup hit for user %s — returning conversion %s", user.id, cached.id)
+                    return {
+                        "job_id": cached.id,
+                        "status": "finished",
+                        "cached": True,
+                        "conversion_id": cached.id,
+                        "message": "Returned from history (identical upload).",
+                    }
+            finally:
+                db.close()
+
     # 22-char URL-safe token (≈ 128 bits of entropy). uuid4 was fine
     # cryptographically — uses os.urandom() under the hood — but
     # secrets.token_urlsafe is the more idiomatic, intent-revealing API.
     job_id = secrets.token_urlsafe(16)
-    
-    # Enqueue job to RQ
+    filename = file.filename or "document.docx"
+
+    # Enqueue job to RQ. Pass user_id + filename so the worker can persist
+    # the result into the user's history when the conversion finishes.
     conversion_queue.enqueue(
         run_conversion,
         args=(job_id, contents, template),
-        job_id=job_id
+        kwargs={"user_id": user.id if user else None, "filename": filename},
+        job_id=job_id,
     )
-    
+
     logger.info(f"Enqueued job {job_id} successfully.")
     return {"job_id": job_id, "status": "queued", "message": "Conversion started"}
 

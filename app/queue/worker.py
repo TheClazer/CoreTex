@@ -9,8 +9,9 @@ The job orchestrates the full pipeline:
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Any, List
+from typing import Any, List, Optional
 
 from redis import Redis
 from rq import Queue, Worker
@@ -50,12 +51,22 @@ def _collect_equation_nodes(nodes: List[Any]) -> List[EquationNode]:
     return [n for n in nodes if isinstance(n, EquationNode)]
 
 
-def run_conversion(job_id: str, docx_bytes: bytes, template: str) -> dict:
+def run_conversion(
+    job_id: str,
+    docx_bytes: bytes,
+    template: str,
+    user_id: Optional[str] = None,
+    filename: str = "document.docx",
+) -> dict:
     """Execute the full Word → LaTeX pipeline for one upload.
 
     The function is queued by FastAPI's POST /convert route and runs in
     an RQ worker process. The dict it returns is what GET /status and
     GET /download read back from Redis.
+
+    When ``user_id`` is supplied AND the database is configured, the
+    conversion (plus its figures) is persisted to the history table so
+    the user can re-download it later without re-running the pipeline.
     """
     logger.info("Job %s starting (template=%s, %.1f KB)", job_id, template, len(docx_bytes) / 1024)
 
@@ -118,11 +129,103 @@ def run_conversion(job_id: str, docx_bytes: bytes, template: str) -> dict:
         compile_error=err_msg,
         compile_error_line=err_line,
     )
+    # ── Persist to user's history (best-effort) ─────────────────────────
+    # If a logged-in user submitted this conversion AND the database is
+    # configured, save the LaTeX + figures so they can re-download from
+    # /history later without re-running the pipeline. Persistence failures
+    # never break the conversion — the result is still returned to the API.
+    conversion_id = None
+    if user_id:
+        try:
+            conversion_id = _persist_to_history(
+                user_id=user_id,
+                docx_bytes=docx_bytes,
+                filename=filename,
+                result=result,
+                figures=figures,
+                warnings=warnings,
+            )
+        except Exception as e:  # pragma: no cover - DB issues shouldn't break conversion
+            logger.warning("Failed to persist conversion to history: %s", e)
+
     logger.info(
-        "Job %s done (compile_ok=%s, warnings=%d, images=%d)",
-        job_id, ok, len(warnings), len(img_nodes),
+        "Job %s done (compile_ok=%s, warnings=%d, images=%d, history_id=%s)",
+        job_id, ok, len(warnings), len(img_nodes), conversion_id,
     )
-    return result.model_dump()
+    payload = result.model_dump()
+    if conversion_id:
+        payload["conversion_id"] = conversion_id
+    return payload
+
+
+def _persist_to_history(
+    *,
+    user_id: str,
+    docx_bytes: bytes,
+    filename: str,
+    result: ConversionResult,
+    figures: dict[str, bytes],
+    warnings: List[str],
+) -> Optional[str]:
+    """Write a successful conversion to the user's history.
+
+    Imports are local so this module doesn't pull SQLAlchemy when the
+    database is unused (CoreTex still works fully stateless).
+    """
+    from app.db import db_enabled, session_scope
+    from app.models import Conversion, Figure
+
+    if not db_enabled():
+        return None
+
+    docx_sha256 = hashlib.sha256(docx_bytes).digest()
+    citation_count = sum(1 for w in warnings if "[CITATION]" in w)
+
+    with session_scope() as session:
+        # If a row for this exact (user, hash, template) already exists,
+        # update it in place instead of inserting a duplicate. Cheap defensive
+        # check; the API's dedup already short-circuits before enqueueing.
+        existing = session.query(Conversion).filter_by(
+            user_id=user_id,
+            docx_sha256=docx_sha256,
+            template=result.template,
+        ).one_or_none()
+
+        if existing is not None:
+            existing.latex_source = result.latex_source
+            existing.has_images = result.has_images
+            existing.warnings = warnings
+            existing.citation_count = citation_count
+            existing.compile_ok = result.compile_ok
+            existing.compile_error = result.compile_error
+            existing.compile_error_line = result.compile_error_line
+            existing.filename = filename
+            # Replace figures
+            for fig in list(existing.figures):
+                session.delete(fig)
+            for name, data in figures.items():
+                session.add(Figure(conversion_id=existing.id, filename=name, data=data))
+            session.flush()
+            return existing.id
+
+        conv = Conversion(
+            user_id=user_id,
+            docx_sha256=docx_sha256,
+            filename=filename,
+            template=result.template,
+            latex_source=result.latex_source,
+            has_images=result.has_images,
+            warnings=warnings,
+            citation_count=citation_count,
+            compile_ok=result.compile_ok,
+            compile_error=result.compile_error,
+            compile_error_line=result.compile_error_line,
+        )
+        session.add(conv)
+        session.flush()  # populates conv.id
+        for name, data in figures.items():
+            session.add(Figure(conversion_id=conv.id, filename=name, data=data))
+        return conv.id
 
 
 if __name__ == "__main__":
