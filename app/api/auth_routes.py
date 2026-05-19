@@ -254,7 +254,14 @@ def google_callback(
                 },
             )
             token_resp.raise_for_status()
-            access_token = token_resp.json()["access_token"]
+            token_json = token_resp.json()
+            if "access_token" not in token_json:
+                logger.warning(
+                    "Google token exchange returned no access_token. Response: %s",
+                    {k: v for k, v in token_json.items() if k != "access_token"},
+                )
+                return _frontend_redirect(error="provider_error")
+            access_token = token_json["access_token"]
 
             userinfo = client.get(
                 _GOOGLE_USERINFO_URL,
@@ -321,7 +328,17 @@ def github_callback(
                 },
             )
             token_resp.raise_for_status()
-            access_token = token_resp.json()["access_token"]
+            token_json = token_resp.json()
+            # GitHub returns 200 OK with `{error: "...", error_description: "..."}`
+            # when client credentials are wrong or the code is stale. Surface that
+            # in the log so we don't get an opaque KeyError.
+            if "access_token" not in token_json:
+                logger.warning(
+                    "GitHub token exchange returned no access_token. Response: %s",
+                    {k: v for k, v in token_json.items() if k != "access_token"},
+                )
+                return _frontend_redirect(error="provider_error")
+            access_token = token_json["access_token"]
 
             userinfo = client.get(
                 _GITHUB_USERINFO_URL,
