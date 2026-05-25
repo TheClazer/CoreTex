@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { setToken } from "../api";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 
 /** Captures the access token from the URL hash that the backend bounced
  * back to us with after a successful OAuth callback. */

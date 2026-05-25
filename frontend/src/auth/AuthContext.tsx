@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   fetchMe,
@@ -9,20 +9,9 @@ import {
   signup as apiSignup,
 } from "../api";
 import type { AuthProviders, User } from "../types";
-
-interface AuthContextValue {
-  user: User | null;
-  loading: boolean;
-  providers: AuthProviders;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, displayName?: string) => Promise<void>;
-  signOut: () => void;
-  refresh: () => Promise<void>;
-}
+import { AuthContext, type AuthContextValue } from "./useAuth";
 
 const DEFAULT_PROVIDERS: AuthProviders = { email: true, google: false, github: false };
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -83,10 +72,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
-  return ctx;
 }
