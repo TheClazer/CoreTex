@@ -6,7 +6,7 @@ import {
   downloadHistoryItem,
   fetchHistory,
 } from "../api";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import type { ConversionSummary, HistoryPage as HistoryPageData } from "../types";
 
 const TEMPLATE_BADGE: Record<string, string> = {

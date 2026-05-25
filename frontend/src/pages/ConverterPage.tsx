@@ -6,7 +6,7 @@ import { TemplateSelector } from "../components/TemplateSelector";
 import { UploadZone } from "../components/UploadZone";
 import { WarningsPanel } from "../components/WarningsPanel";
 import { useConversion } from "../hooks/useConversion";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import type { TemplateChoice } from "../types";
 
 interface Props {
