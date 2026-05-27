@@ -54,14 +54,14 @@ export function AuthPage({ mode }: Props) {
         {(providers.google || providers.github) && (
           <>
             <div className="oauth-row">
-              {providers.google && (
-                <a className="oauth-btn google" href={oauthStartUrl("google")}>
-                  <span className="oauth-icon" aria-hidden>G</span> Continue with Google
-                </a>
-              )}
               {providers.github && (
                 <a className="oauth-btn github" href={oauthStartUrl("github")}>
                   <span className="oauth-icon" aria-hidden>⌥</span> Continue with GitHub
+                </a>
+              )}
+              {providers.google && (
+                <a className="oauth-btn google" href={oauthStartUrl("google")}>
+                  <span className="oauth-icon" aria-hidden>G</span> Continue with Google
                 </a>
               )}
             </div>

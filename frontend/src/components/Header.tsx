@@ -62,7 +62,7 @@ export function Header({ phase, elapsedMs }: Props) {
               <span aria-hidden>▾</span>
             </button>
             {menuOpen && (
-              <div className="account-menu" role="menu">
+              <div className="account-menu" role="menu" onMouseDown={(e) => e.preventDefault()}>
                 <Link to="/history" role="menuitem" onClick={() => setMenuOpen(false)}>
                   📚 History
                 </Link>
