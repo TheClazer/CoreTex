@@ -11,7 +11,7 @@ import {
 import type { AuthProviders, User } from "../types";
 import { AuthContext, type AuthContextValue } from "./useAuth";
 
-const DEFAULT_PROVIDERS: AuthProviders = { email: true, google: false, github: false };
+const DEFAULT_PROVIDERS: AuthProviders = { email: true, google: true, github: true };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
