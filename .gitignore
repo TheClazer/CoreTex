@@ -11,6 +11,10 @@ __pycache__/
 .env
 .env.local
 
+# Local SQLite dev database
+*.db
+*.sqlite3
+
 # Frontend / Node
 node_modules/
 dist/
