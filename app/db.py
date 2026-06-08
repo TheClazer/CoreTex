@@ -18,6 +18,7 @@ from typing import Iterator, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 
@@ -47,13 +48,25 @@ def get_engine() -> Optional[Engine]:
     if not settings.DATABASE_URL:
         return None
     url = _normalize_url(settings.DATABASE_URL)
-    _engine = create_engine(
-        url,
-        pool_pre_ping=True,        # graceful reconnect on stale Railway pgbouncer
-        pool_size=5,
-        max_overflow=10,
-        future=True,
-    )
+    if url.startswith("sqlite"):
+        # Local-dev convenience. SQLite hands the same connection to
+        # different threads under FastAPI's threadpool, so check_same_thread
+        # must be off and a single shared connection (StaticPool) used.
+        # The Postgres/Railway path below is left exactly as before.
+        _engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+            future=True,
+        )
+    else:
+        _engine = create_engine(
+            url,
+            pool_pre_ping=True,        # graceful reconnect on stale Railway pgbouncer
+            pool_size=5,
+            max_overflow=10,
+            future=True,
+        )
     _SessionFactory = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
     logger.info("Database engine initialised at %s", url.split("@")[-1])
     return _engine
