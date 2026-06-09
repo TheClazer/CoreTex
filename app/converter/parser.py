@@ -42,6 +42,7 @@ from app.converter.ir_schema import (
 )
 from app.converter.bibliography import extract_bibliography
 from app.converter.run_merger import merge_runs
+from app.converter.style_map import STYLE_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ def _paragraph_alignment(p: Paragraph) -> TextAlign:
 def _heading_level(p: Paragraph) -> Optional[int]:
     """Return 1..4 if ``p`` is a Heading 1..4, else None."""
     style = (p.style.name or "").strip() if p.style else ""
+    # Custom style map wins for non-built-in style names (v2).
+    mapped = STYLE_MAP.heading_level(style)
+    if mapped is not None:
+        return mapped
     if not style.lower().startswith("heading"):
         # Word also marks titles with 'Title' style; treat as H1.
         if style.lower() == "title":
@@ -132,6 +137,9 @@ def _run_text(run) -> str:
 
 def _build_runs(paragraph: Paragraph) -> List[RunNode]:
     runs: List[RunNode] = []
+    # A custom "code" paragraph style marks every run in the paragraph as code.
+    para_style = (paragraph.style.name or "") if paragraph.style else ""
+    style_is_code = STYLE_MAP.is_code(para_style)
     for r in paragraph.runs:
         text = _run_text(r)
         if not text:
@@ -142,7 +150,7 @@ def _build_runs(paragraph: Paragraph) -> List[RunNode]:
                 bold=bool(r.bold),
                 italic=bool(r.italic),
                 underline=bool(r.underline),
-                code=_is_code_font(r),
+                code=style_is_code or _is_code_font(r),
             )
         )
     # v2 run-merger: collapse Word's per-word/rsid run fragmentation so the
@@ -235,8 +243,13 @@ def _list_info(paragraph: Paragraph) -> Optional[tuple[int, int]]:
                 ilvl = int(ilvl_el.get(qn("w:val"), "0")) if ilvl_el is not None else 0
                 return num_id, ilvl
 
-    # Style-name table — known localisations.
+    # Custom style map (v2): a deployment-defined list style name.
     style = (paragraph.style.name or "") if paragraph.style else ""
+    mapped_kind = STYLE_MAP.list_kind(style)
+    if mapped_kind is not None:
+        return (1000 if mapped_kind == "number" else 2000), 0
+
+    # Style-name table — known localisations.
     sl = style.lower()
     for token, (ordered, _kind) in _LIST_STYLE_TOKENS.items():
         if sl.startswith(token):

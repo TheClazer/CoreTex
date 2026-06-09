@@ -441,8 +441,8 @@ Pandoc's startup cost is ~400 ms on a warm machine. A paper with 150 equations w
 ### Content
 | Area | Limitation | Tracked in |
 |---|---|---|
-| Citations | Plain-text fallback, no `.bib` generation | v2 roadmap |
-| Tables | Merged-cell rendering uses `\multicolumn` only (no row spans) | v2 roadmap |
+| Citations | ✅ v2: managed Word sources → `references.bib` + `\cite`; un-managed citations still fall back to plain text | shipped |
+| Tables | Merged-cell rendering uses `\multicolumn` only (no row spans) | v3 roadmap |
 | Equations | Requires Pandoc on PATH; failures degrade to a placeholder + warning | bible §6 |
 | Compile errors | LaTeX line number is surfaced; no back-mapping to original Word paragraph | bible §6 |
 | Tracked changes | Revision markup stripped; final text only | bible §9 |
@@ -487,14 +487,14 @@ gantt
     i18n list detection (6 locales) :done, 2026-03-12, 2d
     Redis raw-byte figures        :done, 2026-03-14, 1d
 
-    section v2 (planned)
-    Full BibTeX extraction        :2026-04-01, 21d
-    Beamer slides template        :2026-04-22, 14d
-    Direct OMML parser            :2026-05-06, 21d
-    Run-merger optimisation       :2026-05-27, 7d
-    Style mapping config          :2026-06-03, 14d
-    S3 / R2 figure storage        :2026-06-17, 7d
-    Worker autoscale on Railway   :2026-06-24, 5d
+    section v2 (shipped)
+    Full BibTeX extraction        :done, 2026-04-01, 21d
+    Beamer slides template        :done, 2026-04-22, 14d
+    Direct OMML parser            :done, 2026-05-06, 21d
+    Run-merger optimisation       :done, 2026-05-27, 7d
+    Style mapping config          :done, 2026-06-03, 14d
+    S3 / R2 figure storage        :done, 2026-06-17, 7d
+    Worker autoscale on Railway   :done, 2026-06-24, 5d
 ```
 
 ---
