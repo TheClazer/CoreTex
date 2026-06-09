@@ -1,6 +1,6 @@
 // Mirrors backend ConversionResult + /status response shapes.
 
-export type TemplateChoice = "article" | "ieee" | "acm" | "springer";
+export type TemplateChoice = "article" | "ieee" | "acm" | "springer" | "beamer";
 
 export interface ConvertResponse {
   job_id: string;

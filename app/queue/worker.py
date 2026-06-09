@@ -112,9 +112,18 @@ def run_conversion(
     latex_source, render_warnings = render(ir_doc, template=template)
     warnings.extend(render_warnings)
 
+    # v2: BibTeX database extracted from Word's managed sources (or None).
+    bibtex = ir_doc.bibtex
+    if bibtex:
+        n_refs = bibtex.count("@")
+        warnings.append(
+            f"[BIBTEX] Extracted {n_refs} reference(s) to references.bib; "
+            f"run bibtex/biber in your TeX editor to typeset the bibliography."
+        )
+
     # Compile check (skipped gracefully when pdflatex isn't on PATH).
     if pdflatex_available():
-        ok, err_msg, err_line = compile_check(latex_source, figures)
+        ok, err_msg, err_line = compile_check(latex_source, figures, bibtex=bibtex)
     else:
         ok, err_msg, err_line = True, None, None
         warnings.append("pdflatex not available in this environment; compile check skipped.")
@@ -128,6 +137,7 @@ def run_conversion(
         compile_ok=ok,
         compile_error=err_msg,
         compile_error_line=err_line,
+        bibtex=bibtex,
     )
     # ── Persist to user's history (best-effort) ─────────────────────────
     # If a logged-in user submitted this conversion AND the database is

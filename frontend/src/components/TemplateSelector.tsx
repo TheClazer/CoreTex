@@ -5,6 +5,7 @@ const TEMPLATES: { value: TemplateChoice; label: string; desc: string }[] = [
   { value: "ieee", label: "IEEE Transactions", desc: "IEEEtran journal style" },
   { value: "acm", label: "ACM SIGCONF", desc: "acmart conference proceedings" },
   { value: "springer", label: "Springer LNCS", desc: "llncs lecture notes class" },
+  { value: "beamer", label: "Beamer Slides", desc: "presentation deck (one frame per heading)" },
 ];
 
 interface Props {

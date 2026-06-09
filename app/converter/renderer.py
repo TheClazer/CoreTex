@@ -60,6 +60,7 @@ _TEMPLATE_FILES = {
     "ieee": "ieee.tex.j2",
     "acm": "acm.tex.j2",
     "springer": "springer.tex.j2",
+    "beamer": "beamer.tex.j2",
 }
 
 
@@ -199,6 +200,11 @@ def _render_hyperlink(node: HyperlinkNode) -> str:
 
 
 def _render_citation(node: CitationNode, warnings: List[str]) -> str:
+    # v2: when the parser resolved this citation to a BibTeX key (source_id),
+    # emit a real \cite — no warning, no manual work. Otherwise fall back to
+    # the plain-text behaviour the v1 contract guarantees.
+    if node.source_id:
+        return f"\\cite{{{node.source_id}}}"
     display = escape_latex(node.display_text)
     warnings.append(f"[CITATION] '{node.display_text}' kept as plain text — manual BibTeX needed.")
     return f"{display} % [CITATION -- manual BibTeX needed]"
@@ -212,7 +218,7 @@ def _render_page_break() -> str:
 # Preamble injection
 # ---------------------------------------------------------------------------
 
-def _required_packages(doc: IRDocument) -> List[str]:
+def _required_packages(doc: IRDocument, is_beamer: bool = False) -> List[str]:
     has_eq = False
     has_link = False
     has_img = False
@@ -262,7 +268,12 @@ def _required_packages(doc: IRDocument) -> List[str]:
     for node in doc.nodes:
         visit(node)
 
-    pkgs: List[str] = ["\\usepackage[utf8]{inputenc}", "\\usepackage[margin=1in]{geometry}"]
+    # Beamer manages its own page geometry; injecting `geometry` with margins
+    # breaks slide layout, so we omit it (and inputenc, which beamer sets up).
+    if is_beamer:
+        pkgs: List[str] = []
+    else:
+        pkgs = ["\\usepackage[utf8]{inputenc}", "\\usepackage[margin=1in]{geometry}"]
     if has_eq or has_math_unicode:
         pkgs.append("\\usepackage{amsmath}")
         pkgs.append("\\usepackage{amssymb}")
@@ -282,6 +293,88 @@ def _required_packages(doc: IRDocument) -> List[str]:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
+def _render_node(node, warnings: List[str]) -> str | None:
+    """Render a single IR node to LaTeX, or None if unsupported."""
+    if isinstance(node, HeadingNode):
+        return _render_heading(node)
+    if isinstance(node, ParagraphNode):
+        return _render_paragraph(node)
+    if isinstance(node, ListNode):
+        return _render_list(node)
+    if isinstance(node, TableNode):
+        return _render_table(node)
+    if isinstance(node, ImageNode):
+        return _render_image(node)
+    if isinstance(node, EquationNode):
+        return _render_equation(node)
+    if isinstance(node, FootnoteNode):
+        return _render_footnote(node)
+    if isinstance(node, HyperlinkNode):
+        return _render_hyperlink(node)
+    if isinstance(node, CitationNode):
+        return _render_citation(node, warnings)
+    if isinstance(node, PageBreakNode):
+        return _render_page_break()
+    warnings.append(f"Unsupported IR node type: {type(node).__name__}")  # pragma: no cover
+    return None
+
+
+def _render_flat_body(doc: IRDocument, warnings: List[str]) -> str:
+    """Standard article-style body: nodes in order, blank-line separated."""
+    parts = [r for node in doc.nodes if (r := _render_node(node, warnings)) is not None]
+    if doc.bibtex:
+        parts.append("\\bibliographystyle{plain}")
+        parts.append("\\bibliography{references}")
+    return "\n\n".join(parts)
+
+
+def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
+    """Beamer body: split content into frames at heading boundaries.
+
+    Each H1/H2 heading opens a new ``frame`` whose title is the heading text;
+    deeper headings become ``\\textbf`` lead-ins inside the current frame.
+    ``[allowframebreaks]`` lets prose-heavy slides spill onto continuation
+    frames instead of overflowing — the pragmatic choice for converted docs.
+    Content appearing before the first heading goes into a leading frame.
+    """
+    frames: list[str] = []
+    current_title: str | None = None
+    current_body: list[str] = []
+
+    def flush():
+        if not current_body and current_title is None:
+            return
+        title_tex = current_title if current_title is not None else ""
+        inner = "\n\n".join(current_body).strip()
+        frames.append(
+            f"\\begin{{frame}}[allowframebreaks]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
+        )
+
+    for node in doc.nodes:
+        if isinstance(node, PageBreakNode):
+            continue  # page breaks are meaningless between slides
+        if isinstance(node, HeadingNode) and node.level <= 2:
+            flush()
+            current_title = _render_runs(node.runs)
+            current_body = []
+            continue
+        if isinstance(node, HeadingNode):  # deeper heading → emphasised lead-in
+            current_body.append(f"\\textbf{{{_render_runs(node.runs)}}}\\par")
+            continue
+        rendered = _render_node(node, warnings)
+        if rendered is not None:
+            current_body.append(rendered)
+    flush()
+
+    if doc.bibtex:
+        frames.append(
+            "\\begin{frame}[allowframebreaks]{References}\n"
+            "\\bibliographystyle{plain}\n\\bibliography{references}\n"
+            "\\end{frame}"
+        )
+    return "\n\n".join(frames)
+
+
 def render(doc: IRDocument, template: str = "article", metadata: dict | None = None) -> tuple[str, List[str]]:
     """Render an IRDocument to a complete .tex source string.
 
@@ -292,35 +385,15 @@ def render(doc: IRDocument, template: str = "article", metadata: dict | None = N
     if template not in _TEMPLATE_FILES:
         raise ValueError(f"Unknown template: {template!r}")
 
+    is_beamer = template == "beamer"
     warnings: List[str] = []
-    body_parts: list[str] = []
 
-    for node in doc.nodes:
-        if isinstance(node, HeadingNode):
-            body_parts.append(_render_heading(node))
-        elif isinstance(node, ParagraphNode):
-            body_parts.append(_render_paragraph(node))
-        elif isinstance(node, ListNode):
-            body_parts.append(_render_list(node))
-        elif isinstance(node, TableNode):
-            body_parts.append(_render_table(node))
-        elif isinstance(node, ImageNode):
-            body_parts.append(_render_image(node))
-        elif isinstance(node, EquationNode):
-            body_parts.append(_render_equation(node))
-        elif isinstance(node, FootnoteNode):
-            body_parts.append(_render_footnote(node))
-        elif isinstance(node, HyperlinkNode):
-            body_parts.append(_render_hyperlink(node))
-        elif isinstance(node, CitationNode):
-            body_parts.append(_render_citation(node, warnings))
-        elif isinstance(node, PageBreakNode):
-            body_parts.append(_render_page_break())
-        else:  # pragma: no cover - defensive
-            warnings.append(f"Unsupported IR node type: {type(node).__name__}")
+    if is_beamer:
+        body = _render_beamer_body(doc, warnings)
+    else:
+        body = _render_flat_body(doc, warnings)
 
-    body = "\n\n".join(body_parts)
-    packages = _required_packages(doc)
+    packages = _required_packages(doc, is_beamer=is_beamer)
 
     title = doc.title or (metadata or {}).get("title") or "Converted Document"
     author = (metadata or {}).get("author", "CoreTex Converter")

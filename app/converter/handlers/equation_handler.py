@@ -108,14 +108,25 @@ def _strip_pandoc_wrappers(latex: str) -> str:
     return latex
 
 
+def _direct_fallback(omml_xmls: List[str]) -> List[str | None]:
+    """Convert each OMML fragment with the dependency-free direct parser."""
+    from app.converter.handlers.omml_direct import omml_to_latex
+
+    return [omml_to_latex(xml) for xml in omml_xmls]
+
+
 def _batch_convert(omml_xmls: List[str]) -> List[str | None]:
     """Convert N OMML fragments to LaTeX math strings with ONE Pandoc call.
 
     Returns a list of the same length as the input — entries are ``None``
-    where the per-equation conversion failed.
+    where the per-equation conversion failed. When Pandoc is unavailable we
+    fall back to the direct OMML parser so equations still convert.
     """
-    if not _pandoc_available() or not omml_xmls:
-        return [None] * len(omml_xmls)
+    if not omml_xmls:
+        return []
+    if not _pandoc_available():
+        # No Pandoc on PATH: use the v2 direct OMML→LaTeX converter.
+        return _direct_fallback(omml_xmls)
 
     docx_bytes = _build_synthetic_docx(omml_xmls)
     with tempfile.TemporaryDirectory() as td:
@@ -132,19 +143,20 @@ def _batch_convert(omml_xmls: List[str]) -> List[str | None]:
                 check=False,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logger.warning("Pandoc subprocess failed: %s", e)
-            return [None] * len(omml_xmls)
+            logger.warning("Pandoc subprocess failed: %s; using direct OMML parser", e)
+            return _direct_fallback(omml_xmls)
 
     if result.returncode != 0:
         logger.warning(
-            "Pandoc returned %s: %s",
+            "Pandoc returned %s: %s; using direct OMML parser",
             result.returncode,
             result.stderr.decode(errors="replace"),
         )
-        return [None] * len(omml_xmls)
+        return _direct_fallback(omml_xmls)
 
     text = result.stdout.decode("utf-8", errors="replace")
     out: list[str | None] = []
+    direct: list[str | None] | None = None
     for i in range(len(omml_xmls)):
         open_marker = _BATCH_OPEN_FMT.format(idx=i)
         close_marker = _BATCH_CLOSE_FMT.format(idx=i)
@@ -156,7 +168,11 @@ def _batch_convert(omml_xmls: List[str]) -> List[str | None]:
         )
         m = pattern.search(text)
         if not m:
-            out.append(None)
+            # Pandoc dropped this one — recover it with the direct parser
+            # instead of emitting a failure placeholder.
+            if direct is None:
+                direct = _direct_fallback(omml_xmls)
+            out.append(direct[i])
             continue
         out.append(_strip_pandoc_wrappers(m.group(1)))
     return out
