@@ -38,7 +38,7 @@ def _maybe_get_db() -> Optional[Session]:
 async def convert_document(
     request: Request,
     file: UploadFile = File(...),
-    template: Literal['article', 'ieee', 'acm', 'springer'] = Query('article'),
+    template: Literal['article', 'ieee', 'acm', 'springer', 'beamer'] = Query('article'),
     user: Annotated[Optional[User], Depends(current_user_optional)] = None,
 ):
     """Upload a .docx file and either return a cached result (auth + dedup hit)
@@ -150,10 +150,14 @@ async def get_job_status(job_id: str):
 
 
 def zip_output(result: ConversionResult, figures: dict | None = None) -> BytesIO:
-    """Bundle output.tex (and figures/) into an in-memory zip."""
+    """Bundle output.tex (+ figures/ + references.bib) into an in-memory zip."""
     io_stream = BytesIO()
     with zipfile.ZipFile(io_stream, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('output.tex', result.latex_source)
+        # v2: ship the extracted BibTeX database so \bibliography{references}
+        # resolves when the user runs bibtex/biber.
+        if result.bibtex:
+            zf.writestr('references.bib', result.bibtex)
         if figures:
             for name, data in figures.items():
                 zf.writestr(f'figures/{name}', data)
@@ -181,12 +185,16 @@ async def download_result(job_id: str):
     # Deserialise the result back into Pydantic schema
     result = ConversionResult(**job.result)
 
+    # A zip is needed whenever there are extra files to ship beside the .tex:
+    # figures and/or the extracted references.bib.
+    needs_zip = result.has_images or bool(result.bibtex)
+
     # Append .tex / .zip extension so Overleaf's snip_uri import detects
     # the file type from the URL even if Content-Type negotiation fails.
-    ext = "zip" if result.has_images else "tex"
+    ext = "zip" if needs_zip else "tex"
     overleaf_header = {'X-Overleaf-Temp-URL': f"/temp/{job_id}.{ext}"}
 
-    if result.has_images:
+    if needs_zip:
         # Cache the FULL zip (tex + figures) for Overleaf so its snip_uri
         # import gets the figures too. snip_uri supports both .tex and .zip.
         # Figures are stored as individual raw-byte keys (no pickle).

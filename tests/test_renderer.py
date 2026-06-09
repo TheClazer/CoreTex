@@ -125,10 +125,10 @@ def test_escape_layer_applied_to_paragraph_text():
 
 def test_unknown_template_raises():
     with pytest.raises(ValueError):
-        render(_doc(), template="beamer")
+        render(_doc(), template="powerpoint")
 
 
-@pytest.mark.parametrize("template", ["article", "ieee", "acm", "springer"])
+@pytest.mark.parametrize("template", ["article", "ieee", "acm", "springer", "beamer"])
 def test_all_templates_wrap_document(template):
     p = ParagraphNode(runs=[RunNode(text="hello")])
     out, _ = render(_doc(p), template=template)
@@ -136,6 +136,34 @@ def test_all_templates_wrap_document(template):
     assert "\\begin{document}" in out
     assert "\\end{document}" in out
     assert "hello" in out
+
+
+def test_beamer_splits_headings_into_frames():
+    doc = _doc(
+        HeadingNode(level=1, runs=[RunNode(text="First Topic")]),
+        ParagraphNode(runs=[RunNode(text="point one")]),
+        HeadingNode(level=1, runs=[RunNode(text="Second Topic")]),
+        ParagraphNode(runs=[RunNode(text="point two")]),
+    )
+    out, _ = render(doc, template="beamer")
+    assert "\\documentclass{beamer}" in out
+    # One frame per H1, titled with the heading text.
+    assert out.count("\\begin{frame}") == 2
+    assert "{First Topic}" in out
+    assert "{Second Topic}" in out
+    assert "point one" in out and "point two" in out
+    # Beamer must NOT pull in the article geometry package.
+    assert "geometry" not in out
+
+
+def test_beamer_bibliography_gets_its_own_frame():
+    doc = IRDocument(
+        nodes=[ParagraphNode(runs=[RunNode(text="body")])],
+        bibtex="@book{a, title={T}}",
+    )
+    out, _ = render(doc, template="beamer")
+    assert "{References}" in out
+    assert "\\bibliography{references}" in out
 
 
 def test_all_golden_docs_render_to_latex():

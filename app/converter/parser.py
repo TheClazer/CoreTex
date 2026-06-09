@@ -40,6 +40,8 @@ from app.converter.ir_schema import (
     TableRowNode,
     TextAlign,
 )
+from app.converter.bibliography import extract_bibliography
+from app.converter.run_merger import merge_runs
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +145,9 @@ def _build_runs(paragraph: Paragraph) -> List[RunNode]:
                 code=_is_code_font(r),
             )
         )
-    return runs
+    # v2 run-merger: collapse Word's per-word/rsid run fragmentation so the
+    # renderer emits one wrapper per formatted span instead of one per run.
+    return merge_runs(runs)
 
 
 def _has_page_break(paragraph: Paragraph) -> bool:
@@ -352,7 +356,18 @@ def _extract_equations(paragraph: Paragraph) -> List[EquationNode]:
     return out
 
 
-def _extract_citations(paragraph: Paragraph) -> List[CitationNode]:
+def _citation_tag(instr_text: str) -> Optional[str]:
+    """Pull the source tag out of a ``CITATION <Tag> \\l 1033`` field code."""
+    tokens = instr_text.split()
+    # tokens[0] == 'CITATION'; the tag is the next non-switch token.
+    for tok in tokens[1:]:
+        if tok.startswith("\\"):
+            break
+        return tok
+    return None
+
+
+def _extract_citations(paragraph: Paragraph, bib=None) -> List[CitationNode]:
     """Pull Word citation fields out of a paragraph.
 
     Word emits citations as a sequence of w:r elements at the paragraph level:
@@ -397,7 +412,13 @@ def _extract_citations(paragraph: Paragraph) -> List[CitationNode]:
             sibling = sibling.getnext()
 
         raw = etree.tostring(instr, encoding="unicode")
-        out.append(CitationNode(display_text=display or "?", raw_xml=raw, source_id=None))
+        # Resolve the Word source tag to a BibTeX key when a bibliography was
+        # extracted; source_id carries the key so the renderer emits \cite{}.
+        tag = _citation_tag(instr.text or "")
+        bib_key = bib.key_for_tag(tag) if bib is not None else None
+        out.append(
+            CitationNode(display_text=display or "?", raw_xml=raw, source_id=bib_key)
+        )
     return out
 
 
@@ -428,7 +449,7 @@ def _load_footnotes(doc: DocxDocument) -> dict[str, List[RunNode]]:
         for t in fn.findall(f".//{qn('w:t')}"):
             if t.text:
                 runs.append(RunNode(text=t.text))
-        out[fn_id] = runs
+        out[fn_id] = merge_runs(runs)
     return out
 
 
@@ -501,6 +522,7 @@ def _parse_cell(cell: _Cell, row_idx: int, col_idx: int, all_rows: list) -> Tabl
         if align == TextAlign.LEFT:
             align = _paragraph_alignment(p)
         runs.extend(_build_runs(p))
+    runs = merge_runs(runs)
 
     tcPr = cell._tc.find(qn("w:tcPr"))
     col_span = 1
@@ -621,6 +643,10 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
     footnotes = _load_footnotes(doc)
     img_counter = [0]
 
+    # v2 BibTeX: extract Word's managed Sources part once up front so each
+    # in-text CITATION field can resolve to a \cite key.
+    bib = extract_bibliography(docx_bytes)
+
     # Buffer for collecting consecutive list-item paragraphs.
     list_buffer: list[tuple[int, ListItemNode]] = []
     list_num_id: Optional[int] = None
@@ -680,7 +706,7 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
             equations = _extract_equations(p)
             images = _extract_images(p, docx_zip, img_counter, warnings)
             hyperlinks = _extract_hyperlinks(p, doc)
-            citations = _extract_citations(p)
+            citations = _extract_citations(p, bib)
             footnote_refs = _extract_footnote_refs(p, footnotes)
 
             # If the paragraph contains a display equation by itself, prefer the
@@ -730,4 +756,5 @@ def parse_docx(docx_bytes: bytes) -> IRDocument:
 
     flush_list()
 
-    return IRDocument(title=title, nodes=nodes, warnings=warnings)
+    bibtex = None if bib.is_empty else bib.to_bibtex()
+    return IRDocument(title=title, nodes=nodes, warnings=warnings, bibtex=bibtex)

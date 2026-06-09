@@ -117,6 +117,10 @@ class IRDocument(BaseModel):
     title: Optional[str] = None
     nodes: List[IRNode]
     warnings: List[str] = []
+    # v2: BibTeX database extracted from Word's Sources part (None when the
+    # document carries no managed references). When set, the renderer emits a
+    # real \bibliography and the worker ships references.bib in the output.
+    bibtex: Optional[str] = None
 
 class ConversionResult(BaseModel):
     """The final result of the conversion job."""
@@ -129,3 +133,6 @@ class ConversionResult(BaseModel):
     compile_error: Optional[str] = None
     compile_error_line: Optional[int] = None
     overleaf_temp_url: Optional[str] = None
+    # v2: extracted BibTeX database (None when the document had no managed
+    # references). When present, /download bundles references.bib in the zip.
+    bibtex: Optional[str] = None

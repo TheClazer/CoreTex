@@ -33,6 +33,7 @@ def compile_check(
     latex_source: str,
     figures: Optional[Dict[str, bytes]] = None,
     timeout: int = 30,
+    bibtex: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[int]]:
     """Run pdflatex once and report success/failure.
 
@@ -61,6 +62,13 @@ def compile_check(
             fig_dir.mkdir(exist_ok=True)
             for name, data in figures.items():
                 (fig_dir / name).write_bytes(data)
+
+        # v2: drop references.bib next to the .tex so \bibliography resolves.
+        # We don't run a bibtex pass here (the single pdflatex run only checks
+        # for structural errors); pdflatex tolerates the missing .bbl, emitting
+        # at most an "undefined references" warning that doesn't fail the build.
+        if bibtex:
+            (work / "references.bib").write_text(bibtex, encoding="utf-8")
 
         # Restrict TeX file I/O to the working directory.
         env = os.environ.copy()
