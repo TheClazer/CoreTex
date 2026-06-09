@@ -27,6 +27,7 @@ from app.converter.ir_schema import (
 )
 from app.converter.parser import parse_docx
 from app.converter.renderer import render
+from app.storage import get_figure_store
 
 logging.basicConfig(
     level=logging.INFO,
@@ -96,17 +97,13 @@ def run_conversion(
     figures = process_images(img_nodes) if img_nodes else {}
 
     # Persist figures alongside the job so /download can stream them into the
-    # zip. We store each file as a separate raw-byte key (no pickle) and
-    # maintain a manifest of filenames. This avoids:
-    #   * pickle deserialisation risk if Redis is ever compromised
-    #   * the single-key bottleneck of one giant blob
-    # All keys share the same short TTL as the Overleaf temp URL.
+    # zip. The figure store (Redis by default, S3/R2 when FIGURE_STORAGE=s3)
+    # owns the layout; the Redis backend keeps the v1 manifest + raw-byte-key
+    # scheme (no pickle, no single-blob bottleneck) under the Overleaf TTL.
     if figures:
-        ttl = settings.TEMP_URL_TTL_SECONDS
-        manifest = "\n".join(figures.keys()).encode("utf-8")
-        redis_conn.setex(f"figures:{job_id}:manifest", ttl, manifest)
-        for name, data in figures.items():
-            redis_conn.setex(f"figures:{job_id}:f:{name}", ttl, data)
+        get_figure_store(redis_conn).put_many(
+            job_id, figures, settings.TEMP_URL_TTL_SECONDS
+        )
 
     # Render to LaTeX.
     latex_source, render_warnings = render(ir_doc, template=template)

@@ -14,3 +14,12 @@ dockerfilePath = "Dockerfile"
 startCommand = "sh -c 'python -m app.queue.worker'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+
+# Horizontal scaling (v2: worker autoscale on Railway).
+# Each replica is an independent RQ worker popping from the same 'conversions'
+# queue, so N replicas process up to N conversions concurrently and remove the
+# single-worker head-of-line blocking noted in DEPLOY.md. RQ's Redis queue is
+# the coordinator — a job is never handed to two workers. Raise this (or set it
+# from the Railway dashboard) as load grows; 2 is a safe default on paid plans.
+# Keep it at 1 on the free tier to stay within RAM limits.
+numReplicas = 2

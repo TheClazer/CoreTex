@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy to app/style_map.json (or point CORETEX_STYLE_MAP at it) to map custom Word style names to IR roles. Matching is case-insensitive. Built-in styles (Heading 1, List Bullet, monospace fonts) are still detected automatically; this only adds custom names.",
+  "headings": {
+    "Chapter Title": 1,
+    "Section Head": 2,
+    "Sub Head": 3
+  },
+  "code": [
+    "Code",
+    "Source Code",
+    "Listing"
+  ],
+  "lists": {
+    "House Bullets": "bullet",
+    "House Numbers": "number"
+  }
+}

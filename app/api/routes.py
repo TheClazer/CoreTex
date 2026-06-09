@@ -19,6 +19,7 @@ from app.queue.worker import redis_conn, conversion_queue, run_conversion
 from app.converter.ir_schema import ConversionResult
 from app.config import settings
 from app.rate_limit import limiter
+from app.storage import get_figure_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -195,16 +196,10 @@ async def download_result(job_id: str):
     overleaf_header = {'X-Overleaf-Temp-URL': f"/temp/{job_id}.{ext}"}
 
     if needs_zip:
-        # Cache the FULL zip (tex + figures) for Overleaf so its snip_uri
-        # import gets the figures too. snip_uri supports both .tex and .zip.
-        # Figures are stored as individual raw-byte keys (no pickle).
-        manifest_raw = redis_conn.get(f"figures:{job_id}:manifest")
-        figures: dict[str, bytes] = {}
-        if manifest_raw:
-            for name in manifest_raw.decode("utf-8").splitlines():
-                blob = redis_conn.get(f"figures:{job_id}:f:{name}")
-                if blob:
-                    figures[name] = blob
+        # Cache the FULL zip (tex + figures + references.bib) for Overleaf so
+        # its snip_uri import gets everything. Figures come from the configured
+        # figure store (Redis by default, S3/R2 when enabled).
+        figures = get_figure_store(redis_conn).get_many(job_id) if result.has_images else {}
         zip_bytes = zip_output(result, figures).getvalue()
         # Single key with a 4-byte type prefix eliminates the two-get race:
         # if the TTL expires between the content and type lookups, /temp

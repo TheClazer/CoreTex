@@ -237,18 +237,23 @@ serving real production traffic.
 A heavy conversion (150 equations + 20 MB images) can occupy the worker
 for 5–15 seconds. With one worker, the next user's job waits in queue.
 
-**Fix at scale**: upgrade Railway plan, deploy multiple worker replicas
-(set Replicas > 1 on the worker service), and increase Redis memory.
+**✅ Implemented (v2)**: `railway.worker.toml` now sets `numReplicas = 2`.
+Each replica is an independent RQ worker popping the same `conversions`
+queue, so N replicas process N jobs concurrently with no double-dispatch
+(Redis is the coordinator). Raise `numReplicas` (or set it in the Railway
+dashboard) as load grows; keep it at 1 on the free tier for RAM.
 
 ### Figures stored in Redis (cap: ~50 MB)
 The worker stages converted figures in Redis with a 5-minute TTL. This
 is fast and free but Redis is RAM-resident — uploading 100 MB of figures
 will fill the 50 MB Redis tier and start evicting other jobs' figures.
 
-**Fix at scale**: write figures to S3 / Cloudflare R2 instead. The
-worker uploads, the API generates pre-signed URLs for the Overleaf
-snip_uri. ~30 lines of code change, swaps `redis_conn.setex(figures…)`
-for an S3 client.
+**✅ Implemented (v2)**: set `FIGURE_STORAGE=s3` (+ `S3_BUCKET`,
+`S3_ENDPOINT_URL` for Cloudflare R2/MinIO, and AWS creds) to offload
+figures to object storage instead of Redis — see `app/storage.py`. The
+default stays `redis` (zero extra infra); S3 misconfiguration degrades
+back to Redis rather than failing conversions. Configure a bucket
+lifecycle rule on the `figures/` prefix for expiry.
 
 ### Upload memory duplication
 A 20 MB upload transiently consumes ~80–100 MB across the API + RQ

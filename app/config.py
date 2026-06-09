@@ -11,6 +11,19 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 20
     RATE_LIMIT_PER_MINUTE: int = 10
     TEMP_URL_TTL_SECONDS: int = 300
+
+    # ── Figure storage (v2: S3 / Cloudflare R2 offload) ─────────────────
+    # "redis" (default) keeps figures in Redis with a short TTL — zero extra
+    # infra, fine for the free tier. "s3" offloads them to S3/R2 so large or
+    # numerous figures don't pressure Redis memory. S3 mode needs boto3 +
+    # the S3_* settings; it degrades back to Redis if misconfigured.
+    FIGURE_STORAGE: str = "redis"
+    S3_BUCKET: str = ""
+    S3_ENDPOINT_URL: str = ""  # set for Cloudflare R2 / MinIO; empty = AWS S3
+    S3_REGION: str = "auto"
+    S3_PREFIX: str = "figures"
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
     # Comma-separated list of additional CORS origins, e.g.
     #   ALLOWED_ORIGINS=https://coretex.vercel.app,https://staging.coretex.app
     ALLOWED_ORIGINS: str = ""
