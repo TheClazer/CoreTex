@@ -12,9 +12,13 @@ those mappings without touching code, via a small JSON file:
       "lists":    { "My Bullets": "bullet", "My Numbers": "number" }
     }
 
-Resolution order in the parser: the built-in detection runs first; the style
-map fills gaps and overrides for custom style names. Matching is
-case-insensitive and whitespace-trimmed.
+Resolution order in the parser (matching is case-insensitive, whitespace-
+trimmed):
+  * Headings and list kinds: the style map is consulted FIRST, so a custom
+    mapped name overrides the built-in "Heading N" / "List Bullet" detection.
+  * Code: the style map is OR'd with the built-in monospace-font detection —
+    a paragraph is code if EITHER says so.
+An empty/absent map is fully inert, i.e. the exact pre-v2 behaviour.
 
 The file is located via the ``CORETEX_STYLE_MAP`` env var, or ``app/style_map.json``
 beside the package if present. Absent/invalid config → an empty map, i.e. the

@@ -74,14 +74,15 @@ def _authors(source) -> str:
     # Could be Author/Author/NameList, or Author/Corporate.
     corporate = author_el.find(f".//{_b('Corporate')}")
     if corporate is not None and corporate.text:
-        return f"{{{corporate.text.strip()}}}"
+        return f"{{{_escape_bib(corporate.text.strip())}}}"
     for person in author_el.findall(f".//{_b('Person')}"):
         last = person.find(_b("Last"))
         first = person.find(_b("First"))
         middle = person.find(_b("Middle"))
-        last_t = (last.text or "").strip() if last is not None else ""
+        # Escape each name token; keep the structural ", " / " and " separators.
+        last_t = _escape_bib((last.text or "").strip()) if last is not None else ""
         first_parts = [
-            p.text.strip()
+            _escape_bib(p.text.strip())
             for p in (first, middle)
             if p is not None and p.text and p.text.strip()
         ]
@@ -102,8 +103,23 @@ def _field(source, *tags) -> Optional[str]:
 
 
 def _escape_bib(value: str) -> str:
-    """Minimal BibTeX value escaping (braces balanced by callers)."""
-    return value.replace("\\", r"\textbackslash{}").replace("{", r"\{").replace("}", r"\}")
+    """Escape LaTeX-special characters in a BibTeX value.
+
+    BibTeX copies field values verbatim into the .bbl, so an unescaped ``&``,
+    ``%``, ``_``, ``#``, ``$``, ``~`` or ``^`` in a title/author/publisher
+    would break (or truncate) the downstream pdflatex run. Backslash and braces
+    are escaped first so we don't double-escape the replacements we introduce.
+    """
+    if not value:
+        return value
+    value = value.replace("\\", r"\textbackslash{}")
+    value = value.replace("{", r"\{").replace("}", r"\}")
+    for ch, rep in (
+        ("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"),
+        ("_", r"\_"), ("~", r"\textasciitilde{}"), ("^", r"\textasciicircum{}"),
+    ):
+        value = value.replace(ch, rep)
+    return value
 
 
 class BibEntry:

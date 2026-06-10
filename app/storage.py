@@ -104,14 +104,24 @@ class S3FigureStore:
     def get_many(self, job_id: str) -> Dict[str, bytes]:
         prefix = f"{self._prefix}/{job_id}/"
         figures: Dict[str, bytes] = {}
-        resp = self._client.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
-        for obj in resp.get("Contents", []) or []:
-            key = obj["Key"]
-            name = key[len(prefix):]
-            if not name:
-                continue
-            body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
-            figures[name] = body
+        # Paginate: list_objects_v2 returns at most 1000 keys per call, so a job
+        # with >1000 figures would otherwise be silently truncated.
+        token = None
+        while True:
+            kwargs = {"Bucket": self._bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = self._client.list_objects_v2(**kwargs)
+            for obj in resp.get("Contents", []) or []:
+                key = obj["Key"]
+                name = key[len(prefix):]
+                if not name:
+                    continue
+                body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+                figures[name] = body
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
         return figures
 
 

@@ -100,6 +100,9 @@ class Conversion(Base):
     template: Mapped[str] = mapped_column(String(32), nullable=False)
     latex_source: Mapped[str] = mapped_column(Text, nullable=False)
     has_images: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # v2: extracted BibTeX (references.bib content) so history re-downloads
+    # include the bibliography the stored .tex references.
+    bibtex: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     warnings: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     citation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     compile_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

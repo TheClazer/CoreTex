@@ -91,6 +91,40 @@ def test_extract_bibliography_parses_source():
     assert "pages = {3--14}" in bibtex  # en-dash normalised for BibTeX
 
 
+_SOURCES_SPECIAL = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<b:Sources xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography">
+  <b:Source>
+    <b:Tag>AT&amp;T2021</b:Tag>
+    <b:SourceType>Report</b:SourceType>
+    <b:Title>Cost_Model &amp; 50% Margins #1</b:Title>
+    <b:Publisher>AT&amp;T Labs</b:Publisher>
+    <b:Year>2021</b:Year>
+    <b:Author><b:Author><b:NameList>
+      <b:Person><b:Last>O'Neil_Smith</b:Last><b:First>A&amp;B</b:First></b:Person>
+    </b:NameList></b:Author></b:Author>
+  </b:Source>
+</b:Sources>
+"""
+
+
+def test_bibtex_escapes_latex_special_chars():
+    import zipfile as _zip
+    from io import BytesIO as _BIO
+
+    buf = _BIO()
+    with _zip.ZipFile(buf, "w") as zf:
+        zf.writestr("word/bibliography/sources.xml", _SOURCES_SPECIAL)
+    bib = extract_bibliography(buf.getvalue())
+    out = bib.to_bibtex()
+    # Specials must be escaped in title/publisher/author, not left raw.
+    assert r"\&" in out and r"\%" in out and r"\#" in out and r"\_" in out
+    # No bare unescaped & survives in a field value line.
+    for line in out.splitlines():
+        if "=" in line:
+            # every & on a value line must be backslash-escaped
+            assert "&" not in line.replace(r"\&", "")
+
+
 def test_extract_bibliography_absent_is_empty():
     empty_docx = BytesIO()
     with zipfile.ZipFile(empty_docx, "w") as zf:

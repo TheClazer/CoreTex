@@ -128,12 +128,18 @@ def download_history_item(
     if c is None or c.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    if c.has_images and c.figures:
+    # Zip whenever there are extra files to ship: figures and/or the
+    # extracted references.bib the stored .tex's \bibliography references.
+    has_figures = bool(c.has_images and c.figures)
+    if has_figures or c.bibtex:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("output.tex", c.latex_source)
-            for fig in c.figures:
-                zf.writestr(f"figures/{fig.filename}", fig.data)
+            if c.bibtex:
+                zf.writestr("references.bib", c.bibtex)
+            if has_figures:
+                for fig in c.figures:
+                    zf.writestr(f"figures/{fig.filename}", fig.data)
         buf.seek(0)
         return StreamingResponse(
             buf,

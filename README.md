@@ -177,18 +177,25 @@ sequenceDiagram
 - ✅ Merged cells via `\multicolumn`
 - ✅ Embedded images with `\includegraphics` + EXIF/ICC preserved
 - ✅ Footnotes, hyperlinks, page breaks
-- ✅ OMML equations (inline `$` & display `equation`) — **single batched Pandoc call**
-- ✅ Word citations → `[CITATION]` warning marker
+- ✅ OMML equations (inline `$` & display `equation`) — **single batched Pandoc call**, with a **Pandoc-free direct OMML→LaTeX fallback** so equations still convert when Pandoc is absent
+- ✅ Word citations → **`\cite` + generated `references.bib`** for managed sources; un-managed citations fall back to a `[CITATION]` marker
 - ✅ **~140 Unicode math glyphs** auto-converted (ℝ ∈ ∑ ∇ α β X̃ x̂ ⁿᵇⁱ etc.)
+- ✅ **Adjacent-run merger** collapses Word's per-word/rsid fragmentation
 
 </td>
 <td width="50%" valign="top">
 
-### 🎨 4 academic templates
+### 🎨 5 academic templates
 - 📄 **article** — default LaTeX class
 - 🏛 **IEEE Transactions** — `IEEEtran`
 - 🏢 **ACM SIGCONF** — `acmart`
 - 📘 **Springer LNCS** — `llncs`
+- 🖥 **Beamer slides** — one frame per heading, auto `allowframebreaks`
+
+### 🧩 Customisation + scale (v2)
+- ✅ **Style mapping config** — map custom Word style names → headings/code/lists via `CORETEX_STYLE_MAP`
+- ✅ **S3 / Cloudflare R2 figure storage** — set `FIGURE_STORAGE=s3` to offload figures off Redis
+- ✅ **Horizontal worker scaling** — RQ replicas (`numReplicas`) clear queue head-of-line blocking
 
 ### 👤 Accounts + history (v1.2)
 - ✅ Email + password sign-up / sign-in (bcrypt-hashed)
@@ -296,9 +303,9 @@ Base URL: `http://localhost:8000` (dev) · your Railway domain (prod)
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/convert?template=<article\|ieee\|acm\|springer>` | Upload `.docx`, returns `{job_id, status: "queued"}` |
+| `POST` | `/convert?template=<article\|ieee\|acm\|springer\|beamer>` | Upload `.docx`, returns `{job_id, status: "queued"}` |
 | `GET` | `/status/{job_id}` | Polled every 2 s. Returns `{status, result_summary?}` with citation/warning counts, compile error line. |
-| `GET` | `/download/{job_id}` | `.tex` (text/plain) or `.zip` (with `figures/`). Adds `X-Overleaf-Temp-URL` header. |
+| `GET` | `/download/{job_id}` | `.tex` (text/plain) or `.zip` (with `figures/` + `references.bib`). Adds `X-Overleaf-Temp-URL` header. |
 | `GET` | `/temp/{job_id}[.tex\|.zip]` | Public 5-min snip URL — Overleaf's `snip_uri` target. Suffix lets Overleaf detect the type from the URL. |
 | `GET` | `/auth/providers` | Returns which auth methods are configured. |
 | `POST` | `/auth/signup` | `{email, password, display_name?}` → JWT. |
@@ -351,10 +358,10 @@ CoreTex/
 │   │   ├── escape.py                 10 reserved + Unicode
 │   │   ├── compile_check.py          pdflatex + error parsing
 │   │   └── handlers/
-│   │       ├── equation_handler.py   OMML → LaTeX via Pandoc
+│   │       ├── equation_handler.py   OMML → LaTeX via Pandoc (+ direct fallback)
 │   │       ├── image_handler.py      Pillow compression
 │   │       └── table_handler.py      column-spec
-│   └── templates/                    article / ieee / acm / springer
+│   └── templates/                    article / ieee / acm / springer / beamer
 ├── frontend/                         React + Vite + TS
 │   └── src/
 │       ├── App.tsx
@@ -443,7 +450,7 @@ Pandoc's startup cost is ~400 ms on a warm machine. A paper with 150 equations w
 |---|---|---|
 | Citations | ✅ v2: managed Word sources → `references.bib` + `\cite`; un-managed citations still fall back to plain text | shipped |
 | Tables | Merged-cell rendering uses `\multicolumn` only (no row spans) | v3 roadmap |
-| Equations | Requires Pandoc on PATH; failures degrade to a placeholder + warning | bible §6 |
+| Equations | Pandoc gives best fidelity; without it a built-in direct OMML→LaTeX fallback covers common constructs (fractions, scripts, radicals, n-ary ops, Greek/symbols) | shipped (v2) |
 | Compile errors | LaTeX line number is surfaced; no back-mapping to original Word paragraph | bible §6 |
 | Tracked changes | Revision markup stripped; final text only | bible §9 |
 | Resume-style layouts | Per-word formatting + tabs produce verbose output | bible §9 |

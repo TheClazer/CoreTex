@@ -201,6 +201,7 @@ def _persist_to_history(
         if existing is not None:
             existing.latex_source = result.latex_source
             existing.has_images = result.has_images
+            existing.bibtex = result.bibtex
             existing.warnings = warnings
             existing.citation_count = citation_count
             existing.compile_ok = result.compile_ok
@@ -222,6 +223,7 @@ def _persist_to_history(
             template=result.template,
             latex_source=result.latex_source,
             has_images=result.has_images,
+            bibtex=result.bibtex,
             warnings=warnings,
             citation_count=citation_count,
             compile_ok=result.compile_ok,
