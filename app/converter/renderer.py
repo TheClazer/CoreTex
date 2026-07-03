@@ -128,15 +128,25 @@ def _render_list(node: ListNode) -> str:
     return f"\\begin{{{env}}}\n{_render_list_items(node.items, node.ordered)}\n\\end{{{env}}}"
 
 
-def _render_table(node: TableNode) -> str:
+def _render_table(node: TableNode, float_env: bool = True) -> str:
     spec = column_spec(node)
     cols = total_columns(node) or 1
-    lines: list[str] = [
-        "\\begin{table}[!htbp]",
-        "\\centering",
-        f"\\begin{{tabular}}{{{spec}}}",
-        "\\toprule",
-    ]
+    # Beamer frames cannot contain floats (the table/figure environments) —
+    # with allowframebreaks LaTeX aborts with "Float(s) lost". In that mode we
+    # emit a plain centered tabular instead (floats are meaningless on a slide).
+    if float_env:
+        lines: list[str] = [
+            "\\begin{table}[!htbp]",
+            "\\centering",
+            f"\\begin{{tabular}}{{{spec}}}",
+            "\\toprule",
+        ]
+    else:
+        lines = [
+            "\\begin{center}",
+            f"\\begin{{tabular}}{{{spec}}}",
+            "\\toprule",
+        ]
     for r_idx, row in enumerate(node.rows):
         # Pad cells to total column count using col_span.
         rendered_cells: list[str] = []
@@ -161,26 +171,38 @@ def _render_table(node: TableNode) -> str:
             lines.append("\\midrule")
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
-    if node.caption:
-        lines.append(f"\\caption{{{escape_latex(node.caption)}}}")
-    lines.append("\\end{table}")
+    if float_env:
+        if node.caption:
+            lines.append(f"\\caption{{{escape_latex(node.caption)}}}")
+        lines.append("\\end{table}")
+    else:
+        # \caption is invalid outside a float; render it as plain centered text.
+        if node.caption:
+            lines.append(f"\\par\\smallskip{{\\small {escape_latex(node.caption)}}}")
+        lines.append("\\end{center}")
     return "\n".join(lines)
 
 
-def _render_image(node: ImageNode) -> str:
+def _render_image(node: ImageNode, float_env: bool = True) -> str:
     # [!htbp] is more permissive than [h]: try Here, then Top of page, then
     # Bottom, then Page of floats. The `!` overrides LaTeX's internal
     # placement-failure thresholds. Eliminates the "float specifier changed"
     # warnings that pdflatex emits when [h] alone can't fit.
+    #
+    # Beamer frames can't hold floats, so in that mode we emit a plain centered
+    # \includegraphics (with the caption as text, since \caption needs a float).
     width = "0.8\\linewidth"
-    parts = [
-        "\\begin{figure}[!htbp]",
-        "\\centering",
-        f"\\includegraphics[width={width}]{{figures/{node.filename}}}",
-    ]
-    if node.caption:
-        parts.append(f"\\caption{{{escape_latex(node.caption)}}}")
-    parts.append("\\end{figure}")
+    include = f"\\includegraphics[width={width}]{{figures/{node.filename}}}"
+    if float_env:
+        parts = ["\\begin{figure}[!htbp]", "\\centering", include]
+        if node.caption:
+            parts.append(f"\\caption{{{escape_latex(node.caption)}}}")
+        parts.append("\\end{figure}")
+    else:
+        parts = ["\\begin{center}", include]
+        if node.caption:
+            parts.append(f"\\par\\smallskip{{\\small {escape_latex(node.caption)}}}")
+        parts.append("\\end{center}")
     return "\n".join(parts)
 
 
@@ -269,9 +291,10 @@ def _required_packages(doc: IRDocument, is_beamer: bool = False) -> List[str]:
         visit(node)
 
     # Beamer manages its own page geometry; injecting `geometry` with margins
-    # breaks slide layout, so we omit it (and inputenc, which beamer sets up).
+    # breaks slide layout, so we omit it. We DO keep inputenc so UTF-8 body
+    # content is safe on older TeX (it is compatible with beamer).
     if is_beamer:
-        pkgs: List[str] = []
+        pkgs: List[str] = ["\\usepackage[utf8]{inputenc}"]
     else:
         pkgs = ["\\usepackage[utf8]{inputenc}", "\\usepackage[margin=1in]{geometry}"]
     if has_eq or has_math_unicode:
@@ -293,8 +316,12 @@ def _required_packages(doc: IRDocument, is_beamer: bool = False) -> List[str]:
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
-def _render_node(node, warnings: List[str]) -> str | None:
-    """Render a single IR node to LaTeX, or None if unsupported."""
+def _render_node(node, warnings: List[str], float_env: bool = True) -> str | None:
+    """Render a single IR node to LaTeX, or None if unsupported.
+
+    ``float_env`` is False for Beamer, where table/figure floats are illegal
+    inside a frame and must be rendered as plain centered content.
+    """
     if isinstance(node, HeadingNode):
         return _render_heading(node)
     if isinstance(node, ParagraphNode):
@@ -302,9 +329,9 @@ def _render_node(node, warnings: List[str]) -> str | None:
     if isinstance(node, ListNode):
         return _render_list(node)
     if isinstance(node, TableNode):
-        return _render_table(node)
+        return _render_table(node, float_env=float_env)
     if isinstance(node, ImageNode):
-        return _render_image(node)
+        return _render_image(node, float_env=float_env)
     if isinstance(node, EquationNode):
         return _render_equation(node)
     if isinstance(node, FootnoteNode):
@@ -361,7 +388,8 @@ def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
         if isinstance(node, HeadingNode):  # deeper heading → emphasised lead-in
             current_body.append(f"\\textbf{{{_render_runs(node.runs)}}}\\par")
             continue
-        rendered = _render_node(node, warnings)
+        # float_env=False: no table/figure floats inside a Beamer frame.
+        rendered = _render_node(node, warnings, float_env=False)
         if rendered is not None:
             current_body.append(rendered)
     flush()

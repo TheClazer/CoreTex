@@ -156,6 +156,31 @@ def test_beamer_splits_headings_into_frames():
     assert "geometry" not in out
 
 
+def test_beamer_tables_and_images_are_not_floats():
+    # Floats (table/figure) inside a Beamer frame abort compilation with
+    # "Float(s) lost"; they must be plain centered content instead.
+    cell = TableCellNode(runs=[RunNode(text="x")])
+    doc = _doc(
+        HeadingNode(level=1, runs=[RunNode(text="Results")]),
+        TableNode(
+            rows=[TableRowNode(cells=[cell, cell])],
+            col_alignments=[TextAlign.LEFT, TextAlign.CENTER],
+            caption="Cap",
+        ),
+        ImageNode(filename="figure_001.png", image_data=b"x", caption="Fig"),
+    )
+    out, _ = render(doc, template="beamer")
+    assert "\\begin{table}" not in out
+    assert "\\begin{figure}" not in out
+    assert "\\caption" not in out          # \caption is illegal outside a float
+    assert "\\begin{tabular}" in out       # table content still rendered
+    assert "\\includegraphics" in out      # image still rendered
+    # ...but article mode keeps proper floats.
+    art, _ = render(doc, template="article")
+    assert "\\begin{table}[!htbp]" in art
+    assert "\\begin{figure}[!htbp]" in art
+
+
 def test_beamer_bibliography_gets_its_own_frame():
     doc = IRDocument(
         nodes=[ParagraphNode(runs=[RunNode(text="body")])],
