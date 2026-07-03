@@ -110,22 +110,34 @@ def _render_paragraph(node: ParagraphNode) -> str:
     return _wrap_alignment(text, node.alignment)
 
 
-def _render_list_items(items: List[ListItemNode], ordered: bool) -> str:
+# LaTeX's built-in enumerate nests at most 4 deep (itemize 6). Opening a 5th
+# level aborts with "Too deeply nested." Word allows up to 9 list levels, so we
+# cap the rendered nesting: items deeper than the limit are flattened into the
+# deepest legal level instead of opening another environment.
+_MAX_LIST_DEPTH = 4
+
+
+def _render_list_items(items: List[ListItemNode], ordered: bool, depth: int = 1) -> str:
     env = "enumerate" if ordered else "itemize"
     out: list[str] = []
     for item in items:
         out.append(f"  \\item {_render_runs(item.runs)}")
         if item.sub_items:
             # Nested lists inherit the parent's ordering, per the bible.
-            out.append(f"  \\begin{{{env}}}")
-            out.append(_render_list_items(item.sub_items, ordered))
-            out.append(f"  \\end{{{env}}}")
+            if depth < _MAX_LIST_DEPTH:
+                out.append(f"  \\begin{{{env}}}")
+                out.append(_render_list_items(item.sub_items, ordered, depth + 1))
+                out.append(f"  \\end{{{env}}}")
+            else:
+                # Depth cap hit: keep sub-items at this level (compiles) rather
+                # than opening an illegal 5th environment (hard error).
+                out.append(_render_list_items(item.sub_items, ordered, depth))
     return "\n".join(out)
 
 
 def _render_list(node: ListNode) -> str:
     env = "enumerate" if node.ordered else "itemize"
-    return f"\\begin{{{env}}}\n{_render_list_items(node.items, node.ordered)}\n\\end{{{env}}}"
+    return f"\\begin{{{env}}}\n{_render_list_items(node.items, node.ordered, 1)}\n\\end{{{env}}}"
 
 
 def _render_table(node: TableNode, float_env: bool = True) -> str:

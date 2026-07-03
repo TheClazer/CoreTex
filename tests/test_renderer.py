@@ -71,6 +71,19 @@ def test_unordered_list_with_nesting():
     assert "\\item sub" in out
 
 
+def test_list_nesting_capped_at_four_levels():
+    # LaTeX enumerate aborts past 4 levels ("Too deeply nested"); Word allows
+    # up to 9. The renderer must cap open environments at 4 yet keep every item.
+    def deep(n):
+        return [] if n == 0 else [ListItemNode(runs=[RunNode(text=f"L{7 - n}")], sub_items=deep(n - 1))]
+
+    out, _ = render(_doc(ListNode(ordered=True, items=deep(6))))
+    assert out.count("\\begin{enumerate}") == 4          # capped
+    assert out.count("\\begin{enumerate}") == out.count("\\end{enumerate}")  # balanced
+    for i in range(1, 7):
+        assert f"L{i}" in out                            # no item dropped
+
+
 def test_ordered_list_enumerates():
     item = ListItemNode(runs=[RunNode(text="one")])
     out, _ = render(_doc(ListNode(ordered=True, items=[item])))
