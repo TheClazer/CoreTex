@@ -370,30 +370,52 @@ def _render_flat_body(doc: IRDocument, warnings: List[str]) -> str:
     return "\n\n".join(parts)
 
 
+def _is_pseudo_heading(node) -> bool:
+    """A short, entirely-bold paragraph used as a de-facto heading.
+
+    Many documents type their section titles as bold text instead of using
+    Word heading styles. Without this, a whole report collapses into ONE
+    Beamer frame (nothing to split on) and overflows off the slide. We treat a
+    fully-bold, short, single-line paragraph as a slide boundary.
+    """
+    if not isinstance(node, ParagraphNode) or not node.runs:
+        return False
+    if not all(r.bold for r in node.runs):
+        return False
+    text = "".join(r.text for r in node.runs).strip()
+    # Short, single-line, not a full sentence (headings rarely end in a period).
+    return 0 < len(text) <= 70 and "\n" not in text and not text.endswith(".")
+
+
 def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
     """Beamer body: split content into frames at heading boundaries.
 
-    Each H1/H2 heading opens a new top-aligned ``frame`` whose title is the
-    heading text; deeper headings become ``\\textbf`` lead-ins inside the
-    current frame. Content before the first heading goes into a leading frame.
+    A new frame starts at each real H1/H2 heading OR each detected pseudo
+    heading (short all-bold paragraph), so documents that type their titles as
+    bold text still get sliced into slides instead of overflowing one frame.
+    Deeper real headings become ``\\textbf`` lead-ins inside the current frame.
 
-    We deliberately do NOT use ``[allowframebreaks]``: it re-measures the frame
-    and, when the frame contains an ``enumerate``, sends beamer's ``\\labelenumi``
-    into infinite recursion ("TeX capacity exceeded"). Plain ``[t]`` frames
-    always compile; content that overflows a slide is a layout nuisance, not a
-    build failure.
+    Frame-break policy: a frame that contains a list uses plain ``[t]`` because
+    ``[allowframebreaks]`` breaking *inside* an enumerate sends beamer's
+    ``\\labelenumi`` into infinite recursion ("TeX capacity exceeded"). Frames
+    without a list use ``[allowframebreaks]`` so long prose spills across
+    continuation slides instead of being clipped.
     """
     frames: list[str] = []
     current_title: str | None = None
-    current_body: list[str] = []
+    current_parts: list[str] = []
+    current_has_list = False
+    real_heading_count = 0
 
     def flush():
-        if not current_body and current_title is None:
+        nonlocal current_has_list
+        if not current_parts and current_title is None:
             return
         title_tex = current_title if current_title is not None else ""
-        inner = "\n\n".join(current_body).strip()
+        inner = "\n\n".join(current_parts).strip()
+        opt = "t" if current_has_list else "allowframebreaks"
         frames.append(
-            f"\\begin{{frame}}[t]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
+            f"\\begin{{frame}}[{opt}]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
         )
 
     for node in doc.nodes:
@@ -401,17 +423,33 @@ def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
             continue  # page breaks are meaningless between slides
         if isinstance(node, HeadingNode) and node.level <= 2:
             flush()
+            real_heading_count += 1
             current_title = _render_runs(node.runs)
-            current_body = []
+            current_parts, current_has_list = [], False
+            continue
+        if _is_pseudo_heading(node):
+            flush()
+            # Title is inherently bold in beamer, so use the plain text.
+            current_title = escape_latex("".join(r.text for r in node.runs).strip())
+            current_parts, current_has_list = [], False
             continue
         if isinstance(node, HeadingNode):  # deeper heading → emphasised lead-in
-            current_body.append(f"\\textbf{{{_render_runs(node.runs)}}}\\par")
+            current_parts.append(f"\\textbf{{{_render_runs(node.runs)}}}\\par")
             continue
+        if isinstance(node, ListNode):
+            current_has_list = True
         # float_env=False: no table/figure floats inside a Beamer frame.
         rendered = _render_node(node, warnings, float_env=False)
         if rendered is not None:
-            current_body.append(rendered)
+            current_parts.append(rendered)
     flush()
+
+    if real_heading_count == 0:
+        warnings.append(
+            "[BEAMER] This document has no Word heading styles, so slides were "
+            "auto-detected from bold section titles. For a long report, the "
+            "'article' or 'ieee' template usually reads better than slides."
+        )
 
     if doc.bibtex:
         frames.append(

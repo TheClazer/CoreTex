@@ -194,6 +194,41 @@ def test_beamer_tables_and_images_are_not_floats():
     assert "\\begin{figure}[!htbp]" in art
 
 
+def test_beamer_segments_on_bold_pseudo_headings():
+    # A report whose section titles are bold paragraphs (no Word heading styles)
+    # must still split into multiple frames instead of collapsing into one.
+    doc = _doc(
+        ParagraphNode(runs=[RunNode(text="CHAPTER 1: INTRODUCTION", bold=True)]),
+        ParagraphNode(runs=[RunNode(text="Some intro prose.")]),
+        ParagraphNode(runs=[RunNode(text="CHAPTER 2: METHOD", bold=True)]),
+        ParagraphNode(runs=[RunNode(text="Some method prose.")]),
+    )
+    out, warns = render(doc, template="beamer")
+    assert out.count("\\begin{frame}") == 2
+    assert "{CHAPTER 1: INTRODUCTION}" in out
+    assert "{CHAPTER 2: METHOD}" in out
+    # No real Word headings -> a suitability warning is emitted.
+    assert any("BEAMER" in w for w in warns)
+
+
+def test_beamer_list_frames_avoid_allowframebreaks():
+    # A frame containing a list must use [t] (allowframebreaks + enumerate
+    # crashes); a prose-only frame uses allowframebreaks so it can spill.
+    list_doc = _doc(
+        HeadingNode(level=1, runs=[RunNode(text="Steps")]),
+        ListNode(ordered=True, items=[ListItemNode(runs=[RunNode(text="one")])]),
+    )
+    out = render(list_doc, template="beamer")[0]
+    assert "\\begin{frame}[t]{Steps}" in out
+
+    prose_doc = _doc(
+        HeadingNode(level=1, runs=[RunNode(text="Intro")]),
+        ParagraphNode(runs=[RunNode(text="long prose")]),
+    )
+    out2 = render(prose_doc, template="beamer")[0]
+    assert "\\begin{frame}[allowframebreaks]{Intro}" in out2
+
+
 def test_beamer_bibliography_gets_its_own_frame():
     doc = IRDocument(
         nodes=[ParagraphNode(runs=[RunNode(text="body")])],
