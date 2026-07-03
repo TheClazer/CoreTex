@@ -211,15 +211,16 @@ def test_beamer_segments_on_bold_pseudo_headings():
     assert any("BEAMER" in w for w in warns)
 
 
-def test_beamer_list_frames_avoid_allowframebreaks():
-    # A frame containing a list must use [t] (allowframebreaks + enumerate
-    # crashes); a prose-only frame uses allowframebreaks so it can spill.
+def test_beamer_list_frames_use_shrink_not_allowframebreaks():
+    # A frame containing a list must NOT use allowframebreaks (breaking inside an
+    # enumerate crashes); it scales to fit with [shrink]. Prose frames spill.
     list_doc = _doc(
         HeadingNode(level=1, runs=[RunNode(text="Steps")]),
         ListNode(ordered=True, items=[ListItemNode(runs=[RunNode(text="one")])]),
     )
     out = render(list_doc, template="beamer")[0]
-    assert "\\begin{frame}[t]{Steps}" in out
+    assert "\\begin{frame}[shrink]{Steps}" in out
+    assert "allowframebreaks]{Steps}" not in out
 
     prose_doc = _doc(
         HeadingNode(level=1, runs=[RunNode(text="Intro")]),
@@ -227,6 +228,19 @@ def test_beamer_list_frames_avoid_allowframebreaks():
     )
     out2 = render(prose_doc, template="beamer")[0]
     assert "\\begin{frame}[allowframebreaks]{Intro}" in out2
+
+
+def test_beamer_splits_oversized_sections_into_continuation_frames():
+    # A section far larger than one slide must be split into "(cont.)" frames
+    # so nothing overflows off the slide (the "only 2 pages" report bug).
+    long_para = "word " * 120  # ~600 chars each
+    doc = _doc(
+        HeadingNode(level=1, runs=[RunNode(text="Big")]),
+        *[ParagraphNode(runs=[RunNode(text=long_para)]) for _ in range(6)],
+    )
+    out, _ = render(doc, template="beamer")
+    assert out.count("\\begin{frame}") >= 3          # split, not one giant frame
+    assert "Big (cont.)" in out                       # continuation titles
 
 
 def test_beamer_bibliography_gets_its_own_frame():

@@ -110,6 +110,11 @@ def _render_paragraph(node: ParagraphNode) -> str:
     return _wrap_alignment(text, node.alignment)
 
 
+# Approximate characters that fit on one Beamer slide; sections larger than this
+# are split into "(cont.)" continuation frames so nothing overflows off-slide.
+_BEAMER_FRAME_BUDGET = 1200
+
+
 # LaTeX's built-in enumerate nests at most 4 deep (itemize 6). Opening a 5th
 # level aborts with "Too deeply nested." Word allows up to 9 list levels, so we
 # cap the rendered nesting: items deeper than the limit are flattened into the
@@ -371,20 +376,37 @@ def _render_flat_body(doc: IRDocument, warnings: List[str]) -> str:
 
 
 def _is_pseudo_heading(node) -> bool:
-    """A short, entirely-bold paragraph used as a de-facto heading.
+    """A short, left-aligned, entirely-bold paragraph used as a section title.
 
-    Many documents type their section titles as bold text instead of using
-    Word heading styles. Without this, a whole report collapses into ONE
-    Beamer frame (nothing to split on) and overflows off the slide. We treat a
-    fully-bold, short, single-line paragraph as a slide boundary.
+    Many documents type their section titles as bold text instead of using Word
+    heading styles. Without treating these as slide boundaries a whole report
+    collapses into ONE Beamer frame and overflows. But the detection must be
+    CONSERVATIVE, or every bold label and cover-page line becomes its own blank
+    slide. So we require the paragraph to be:
+
+      * entirely bold, short (<= 70 chars), single line;
+      * left-aligned — excludes centered cover-page/title-block text;
+      * not a full sentence (no trailing period);
+      * not an inline lead-in label (no trailing colon, e.g. "Purpose:").
     """
     if not isinstance(node, ParagraphNode) or not node.runs:
+        return False
+    # Exclude centered/right text (cover-page title blocks, centered formulae);
+    # real section headings are left- or justify-aligned.
+    if node.alignment in (TextAlign.CENTER, TextAlign.RIGHT):
         return False
     if not all(r.bold for r in node.runs):
         return False
     text = "".join(r.text for r in node.runs).strip()
-    # Short, single-line, not a full sentence (headings rarely end in a period).
-    return 0 < len(text) <= 70 and "\n" not in text and not text.endswith(".")
+    if len(text) < 3 or len(text) > 70 or "\n" in text or "\t" in text:
+        return False
+    if text.endswith((".", ":")):
+        return False
+    # Must read like a title: at least two letters. Excludes bare numbering
+    # like "1" / "2" (e.g. examiner-list entries) that are not headings.
+    if sum(c.isalpha() for c in text) < 2:
+        return False
+    return True
 
 
 def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
@@ -395,54 +417,88 @@ def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
     bold text still get sliced into slides instead of overflowing one frame.
     Deeper real headings become ``\\textbf`` lead-ins inside the current frame.
 
-    Frame-break policy: a frame that contains a list uses plain ``[t]`` because
-    ``[allowframebreaks]`` breaking *inside* an enumerate sends beamer's
-    ``\\labelenumi`` into infinite recursion ("TeX capacity exceeded"). Frames
-    without a list use ``[allowframebreaks]`` so long prose spills across
-    continuation slides instead of being clipped.
+    Frame-fit policy: no single frame is allowed to grow far past one slide.
+    Each section's nodes are packed into size-bounded chunks; when a chunk
+    exceeds the budget a continuation frame ("(cont.)") starts. Within a chunk,
+    a list-free chunk uses ``[allowframebreaks]`` (prose spills safely) and a
+    list-bearing chunk uses ``[shrink]`` (scale-to-fit) — never plain
+    ``allowframebreaks`` around a list, which breaks *inside* an enumerate and
+    sends beamer's ``\\labelenumi`` into infinite recursion.
+
+    Title-only sections (a heading immediately followed by another heading) are
+    merged forward as a bold lead-in so they don't render as blank slides.
     """
-    frames: list[str] = []
-    current_title: str | None = None
-    current_parts: list[str] = []
-    current_has_list = False
+    # 1. Group nodes into sections. parts = list of (rendered_str, is_list).
+    sections: list[tuple] = []
+    cur_title: str | None = None
+    cur_parts: list[tuple] = []
     real_heading_count = 0
 
-    def flush():
-        nonlocal current_has_list
-        if not current_parts and current_title is None:
-            return
-        title_tex = current_title if current_title is not None else ""
-        inner = "\n\n".join(current_parts).strip()
-        opt = "t" if current_has_list else "allowframebreaks"
-        frames.append(
-            f"\\begin{{frame}}[{opt}]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
-        )
+    def push():
+        nonlocal cur_title, cur_parts
+        if cur_parts or cur_title is not None:
+            sections.append((cur_title, cur_parts))
+        cur_title, cur_parts = None, []
 
     for node in doc.nodes:
         if isinstance(node, PageBreakNode):
             continue  # page breaks are meaningless between slides
         if isinstance(node, HeadingNode) and node.level <= 2:
-            flush()
+            push()
             real_heading_count += 1
-            current_title = _render_runs(node.runs)
-            current_parts, current_has_list = [], False
+            cur_title = _render_runs(node.runs)
             continue
         if _is_pseudo_heading(node):
-            flush()
+            push()
             # Title is inherently bold in beamer, so use the plain text.
-            current_title = escape_latex("".join(r.text for r in node.runs).strip())
-            current_parts, current_has_list = [], False
+            cur_title = escape_latex("".join(r.text for r in node.runs).strip())
             continue
         if isinstance(node, HeadingNode):  # deeper heading → emphasised lead-in
-            current_parts.append(f"\\textbf{{{_render_runs(node.runs)}}}\\par")
+            cur_parts.append((f"\\textbf{{{_render_runs(node.runs)}}}\\par", False))
             continue
-        if isinstance(node, ListNode):
-            current_has_list = True
         # float_env=False: no table/figure floats inside a Beamer frame.
         rendered = _render_node(node, warnings, float_env=False)
         if rendered is not None:
-            current_parts.append(rendered)
-    flush()
+            # Lists and tables are atomic (can't page-break) and overflow-prone,
+            # so a frame holding one must scale-to-fit rather than spill/clip.
+            cur_parts.append((rendered, isinstance(node, (ListNode, TableNode))))
+    push()
+
+    # 2. Merge title-only dividers forward, size-chunk each section, and emit.
+    frames: list[str] = []
+    carried: list[str] = []  # divider titles waiting for a frame with content
+
+    def emit_chunk(title: str, chunk: list, cont: bool):
+        has_atomic = any(atomic for _, atomic in chunk)
+        body = "\n\n".join(s for s, _ in chunk).strip()
+        opt = "shrink" if has_atomic else "allowframebreaks"
+        title_tex = (title + " (cont.)") if (cont and title) else (title or "")
+        frames.append(f"\\begin{{frame}}[{opt}]{{{title_tex}}}\n{body}\n\\end{{frame}}")
+
+    for title, parts in sections:
+        if not parts:
+            if title:
+                carried.append(title)
+            continue
+        lead = [(f"\\textbf{{{t}}}\\par", False) for t in carried]
+        carried = []
+        allparts = lead + parts
+        # Pack nodes into ~one-slide chunks (split only at node boundaries).
+        chunk: list = []
+        chunk_len = 0
+        first = True
+        for part in allparts:
+            plen = len(part[0])
+            if chunk and chunk_len + plen > _BEAMER_FRAME_BUDGET:
+                emit_chunk(title, chunk, cont=not first)
+                first, chunk, chunk_len = False, [], 0
+            chunk.append(part)
+            chunk_len += plen
+        if chunk:
+            emit_chunk(title, chunk, cont=not first)
+    if carried:  # trailing dividers with no following content
+        body = "".join(f"\\textbf{{{t}}}\\par\n" for t in carried).strip()
+        frames.append(f"\\begin{{frame}}[allowframebreaks]{{{carried[0]}}}\n{body}\n\\end{{frame}}")
 
     if real_heading_count == 0:
         warnings.append(
