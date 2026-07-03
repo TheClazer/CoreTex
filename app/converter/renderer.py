@@ -300,13 +300,16 @@ def _required_packages(doc: IRDocument, is_beamer: bool = False) -> List[str]:
     if has_eq or has_math_unicode:
         pkgs.append("\\usepackage{amsmath}")
         pkgs.append("\\usepackage{amssymb}")
-    if has_link:
+    # Beamer already loads hyperref and graphicx internally, and enumitem
+    # conflicts with beamer's own list handling — only add these for the
+    # article-style templates.
+    if has_link and not is_beamer:
         pkgs.append("\\usepackage{hyperref}")
-    if has_img:
+    if has_img and not is_beamer:
         pkgs.append("\\usepackage{graphicx}")
     if has_table:
         pkgs.append("\\usepackage{booktabs}")
-    if has_list:
+    if has_list and not is_beamer:
         pkgs.append("\\usepackage{enumitem}")
     # footnote pkg is part of base LaTeX; we don't need an explicit usepackage.
     return pkgs
@@ -358,11 +361,15 @@ def _render_flat_body(doc: IRDocument, warnings: List[str]) -> str:
 def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
     """Beamer body: split content into frames at heading boundaries.
 
-    Each H1/H2 heading opens a new ``frame`` whose title is the heading text;
-    deeper headings become ``\\textbf`` lead-ins inside the current frame.
-    ``[allowframebreaks]`` lets prose-heavy slides spill onto continuation
-    frames instead of overflowing — the pragmatic choice for converted docs.
-    Content appearing before the first heading goes into a leading frame.
+    Each H1/H2 heading opens a new top-aligned ``frame`` whose title is the
+    heading text; deeper headings become ``\\textbf`` lead-ins inside the
+    current frame. Content before the first heading goes into a leading frame.
+
+    We deliberately do NOT use ``[allowframebreaks]``: it re-measures the frame
+    and, when the frame contains an ``enumerate``, sends beamer's ``\\labelenumi``
+    into infinite recursion ("TeX capacity exceeded"). Plain ``[t]`` frames
+    always compile; content that overflows a slide is a layout nuisance, not a
+    build failure.
     """
     frames: list[str] = []
     current_title: str | None = None
@@ -374,7 +381,7 @@ def _render_beamer_body(doc: IRDocument, warnings: List[str]) -> str:
         title_tex = current_title if current_title is not None else ""
         inner = "\n\n".join(current_body).strip()
         frames.append(
-            f"\\begin{{frame}}[allowframebreaks]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
+            f"\\begin{{frame}}[t]{{{title_tex}}}\n{inner}\n\\end{{frame}}"
         )
 
     for node in doc.nodes:
