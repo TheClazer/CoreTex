@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 20
     RATE_LIMIT_PER_MINUTE: int = 10
     TEMP_URL_TTL_SECONDS: int = 300
+    # Wall-clock budget for the pdflatex compile check. Raise on slow
+    # (shared / free-tier) CPUs where a real paper can exceed 30 s.
+    COMPILE_TIMEOUT_SECONDS: int = 30
 
     # ── Figure storage (v2: S3 / Cloudflare R2 offload) ─────────────────
     # "redis" (default) keeps figures in Redis with a short TTL — zero extra

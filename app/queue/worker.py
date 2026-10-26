@@ -120,7 +120,9 @@ def run_conversion(
 
     # Compile check (skipped gracefully when pdflatex isn't on PATH).
     if pdflatex_available():
-        ok, err_msg, err_line = compile_check(latex_source, figures, bibtex=bibtex)
+        ok, err_msg, err_line = compile_check(
+            latex_source, figures, timeout=settings.COMPILE_TIMEOUT_SECONDS, bibtex=bibtex
+        )
     else:
         ok, err_msg, err_line = True, None, None
         warnings.append("pdflatex not available in this environment; compile check skipped.")
