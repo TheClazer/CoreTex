@@ -34,9 +34,18 @@ class Base(DeclarativeBase):
 
 
 def _normalize_url(url: str) -> str:
-    """Railway / Heroku hand out ``postgres://`` URLs; SQLAlchemy needs ``postgresql://``."""
+    """Normalise hosted Postgres URLs to an explicit, installed driver.
+
+    * Railway / Heroku hand out ``postgres://``; SQLAlchemy needs ``postgresql``.
+    * A bare ``postgresql://`` lets SQLAlchemy pick its default driver, which
+      changed to psycopg 3 in newer releases — but we ship ``psycopg2-binary``.
+      Pin ``postgresql+psycopg2://`` so the driver never depends on the
+      SQLAlchemy version a fresh build happens to resolve.
+    """
     if url.startswith("postgres://"):
-        return "postgresql://" + url[len("postgres://"):]
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
     return url
 
 
