@@ -115,34 +115,39 @@ def _render_paragraph(node: ParagraphNode) -> str:
 _BEAMER_FRAME_BUDGET = 1200
 
 
-# LaTeX's built-in enumerate nests at most 4 deep (itemize 6). Opening a 5th
-# level aborts with "Too deeply nested." Word allows up to 9 list levels, so we
-# cap the rendered nesting: items deeper than the limit are flattened into the
+# LaTeX's built-in enumerate nests at most 4 deep; Beamer is stricter and only
+# allows 3 levels of itemize/enumerate. Opening one level too many aborts with
+# "Too deeply nested." Word allows up to 9 list levels, so we cap the rendered
+# nesting per template: items deeper than the limit are flattened into the
 # deepest legal level instead of opening another environment.
 _MAX_LIST_DEPTH = 4
+_BEAMER_MAX_LIST_DEPTH = 3
 
 
-def _render_list_items(items: List[ListItemNode], ordered: bool, depth: int = 1) -> str:
+def _render_list_items(
+    items: List[ListItemNode], ordered: bool, depth: int = 1, max_depth: int = _MAX_LIST_DEPTH
+) -> str:
     env = "enumerate" if ordered else "itemize"
     out: list[str] = []
     for item in items:
         out.append(f"  \\item {_render_runs(item.runs)}")
         if item.sub_items:
             # Nested lists inherit the parent's ordering, per the bible.
-            if depth < _MAX_LIST_DEPTH:
+            if depth < max_depth:
                 out.append(f"  \\begin{{{env}}}")
-                out.append(_render_list_items(item.sub_items, ordered, depth + 1))
+                out.append(_render_list_items(item.sub_items, ordered, depth + 1, max_depth))
                 out.append(f"  \\end{{{env}}}")
             else:
                 # Depth cap hit: keep sub-items at this level (compiles) rather
-                # than opening an illegal 5th environment (hard error).
-                out.append(_render_list_items(item.sub_items, ordered, depth))
+                # than opening an illegal extra environment (hard error).
+                out.append(_render_list_items(item.sub_items, ordered, depth, max_depth))
     return "\n".join(out)
 
 
-def _render_list(node: ListNode) -> str:
+def _render_list(node: ListNode, max_depth: int = _MAX_LIST_DEPTH) -> str:
     env = "enumerate" if node.ordered else "itemize"
-    return f"\\begin{{{env}}}\n{_render_list_items(node.items, node.ordered, 1)}\n\\end{{{env}}}"
+    body = _render_list_items(node.items, node.ordered, 1, max_depth)
+    return f"\\begin{{{env}}}\n{body}\n\\end{{{env}}}"
 
 
 def _render_table(node: TableNode, float_env: bool = True) -> str:
@@ -347,7 +352,8 @@ def _render_node(node, warnings: List[str], float_env: bool = True) -> str | Non
     if isinstance(node, ParagraphNode):
         return _render_paragraph(node)
     if isinstance(node, ListNode):
-        return _render_list(node)
+        # Beamer (float_env=False) allows one fewer list level than article.
+        return _render_list(node, _MAX_LIST_DEPTH if float_env else _BEAMER_MAX_LIST_DEPTH)
     if isinstance(node, TableNode):
         return _render_table(node, float_env=float_env)
     if isinstance(node, ImageNode):

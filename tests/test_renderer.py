@@ -84,6 +84,19 @@ def test_list_nesting_capped_at_four_levels():
         assert f"L{i}" in out                            # no item dropped
 
 
+def test_beamer_list_nesting_capped_at_three_levels():
+    # Beamer only supports 3 levels of itemize/enumerate (article allows 4);
+    # a 4th level aborts with "Too deeply nested" (caught by a live compile).
+    def deep(n):
+        return [] if n == 0 else [ListItemNode(runs=[RunNode(text=f"L{6 - n}")], sub_items=deep(n - 1))]
+
+    out, _ = render(_doc(ListNode(ordered=False, items=deep(5))), template="beamer")
+    assert out.count("\\begin{itemize}") == 3
+    assert out.count("\\begin{itemize}") == out.count("\\end{itemize}")
+    for i in range(1, 6):
+        assert f"L{i}" in out
+
+
 def test_ordered_list_enumerates():
     item = ListItemNode(runs=[RunNode(text="one")])
     out, _ = render(_doc(ListNode(ordered=True, items=[item])))
