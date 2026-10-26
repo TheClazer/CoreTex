@@ -84,7 +84,7 @@ flowchart LR
 
     subgraph Cache["Redis"]
         Jobs[Job state + result]
-        Temp[5-min temp URLs<br/>for Overleaf snip_uri]
+        Temp[30-min temp URLs<br/>for Overleaf snip_uri]
         Figs[Compressed figures]
     end
 
@@ -306,7 +306,7 @@ Base URL: `http://localhost:8000` (dev) · your Railway domain (prod)
 | `POST` | `/convert?template=<article\|ieee\|acm\|springer\|beamer>` | Upload `.docx`, returns `{job_id, status: "queued"}` |
 | `GET` | `/status/{job_id}` | Polled every 2 s. Returns `{status, result_summary?}` with citation/warning counts, compile error line. |
 | `GET` | `/download/{job_id}` | `.tex` (text/plain) or `.zip` (with `figures/` + `references.bib`). Adds `X-Overleaf-Temp-URL` header. |
-| `GET` | `/temp/{job_id}[.tex\|.zip]` | Public 5-min snip URL — Overleaf's `snip_uri` target. Suffix lets Overleaf detect the type from the URL. |
+| `GET` | `/temp/{job_id}[.tex\|.zip]` | Public 30-min snip URL — Overleaf's `snip_uri` target. Suffix lets Overleaf detect the type from the URL. |
 | `GET` | `/auth/providers` | Returns which auth methods are configured. |
 | `POST` | `/auth/signup` | `{email, password, display_name?}` → JWT. |
 | `POST` | `/auth/login` | `{email, password}` → JWT. |
@@ -460,7 +460,7 @@ Pandoc's startup cost is ~400 ms on a warm machine. A paper with 150 equations w
 |---|---|---|
 | Upload size | Hard 20 MB cap | Set `MAX_FILE_SIZE_MB`; bump Railway RAM |
 | Worker count | Single RQ worker blocks under load | Set `numReplicas` on the worker service (implemented, v2) |
-| Figure storage | Redis by default (5-min TTL, ~50 MB ceiling) | `FIGURE_STORAGE=s3` for S3 / Cloudflare R2 (implemented, v2) |
+| Figure storage | Redis by default (30-min TTL, ~50 MB ceiling) | `FIGURE_STORAGE=s3` for S3 / Cloudflare R2 (implemented, v2) |
 | Upload memory | ~5× duplication at peak (HTTP → buffer → RQ → Redis → worker) | Presigned PUT to S3, pass key through RQ |
 | TeX Live image | 1.5 GB Docker layer; ~30 s cold start | Pre-warm with min-replicas, or `INSTALL_TEXLIVE=0` |
 

@@ -145,7 +145,7 @@ GitHub. To require these checks before merge, in GitHub:
 | Symptom                                          | Fix                                                                                                  |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | `pdflatex: command not found` warnings in logs   | TeX Live wasn't installed in the image. Confirm `INSTALL_TEXLIVE` build-arg is `1` (default).         |
-| Overleaf button gives 404                        | The 5-minute Redis TTL expired. Re-convert to regenerate the temp URL.                               |
+| Overleaf button gives 404                        | The 30-minute Redis TTL expired (the app now warns before opening Overleaf). Re-convert to regenerate the temp URL.                               |
 | `RateLimitExceeded` from `/convert`              | Bump `RATE_LIMIT_PER_MINUTE`; default is 10/min/IP.                                                  |
 | Worker fills memory on large `.docx`             | Confirm `MAX_FILE_SIZE_MB=20` is set; raise Railway plan if you need bigger uploads.                 |
 | Frontend POSTs hit CORS in production            | Either set `VITE_API_BASE` correctly (Vercel) and add the Vercel origin to `origins` in `main.py`.   |
@@ -244,7 +244,7 @@ queue, so N replicas process N jobs concurrently with no double-dispatch
 dashboard) as load grows; keep it at 1 on the free tier for RAM.
 
 ### Figures stored in Redis (cap: ~50 MB)
-The worker stages converted figures in Redis with a 5-minute TTL. This
+The worker stages converted figures in Redis with a 30-minute TTL. This
 is fast and free but Redis is RAM-resident — uploading 100 MB of figures
 will fill the 50 MB Redis tier and start evicting other jobs' figures.
 

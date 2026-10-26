@@ -90,6 +90,15 @@ async def test_status_not_found():
 
 
 @pytest.mark.asyncio
+async def test_temp_accepts_head(mock_routes_redis):
+    """HEAD on the Overleaf temp link must not 405 (fetchers probe with it)."""
+    mock_routes_redis.get.return_value = b"TEX:\\documentclass{article}"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.head("/temp/some-job.tex")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_temp_not_found(mock_routes_redis):
     """6. Test GET /temp/nonexistent-id returns 404."""
     # Simulate Redis returning None for the key

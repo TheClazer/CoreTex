@@ -110,6 +110,7 @@ export function ConverterPage({ onToast }: Props) {
             overleafTempUrl={state.overleafTempUrl}
             disabled={state.phase !== "done"}
             onCopied={() => onToast("Copied to clipboard")}
+            onNotice={onToast}
           />
         </div>
         {state.texSource ? (

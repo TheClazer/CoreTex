@@ -108,6 +108,9 @@ async def convert_document(
         args=(job_id, contents, template),
         kwargs={"user_id": user.id if user else None, "filename": filename},
         job_id=job_id,
+        # Keep the result as long as the Overleaf temp link it backs, so
+        # /download (and thus the link) can be regenerated within that window.
+        result_ttl=settings.TEMP_URL_TTL_SECONDS,
     )
 
     logger.info(f"Enqueued job {job_id} successfully.")
@@ -234,9 +237,11 @@ async def download_result(job_id: str):
     )
 
 
-@router.get("/temp/{job_id}.tex")
-@router.get("/temp/{job_id}.zip")
-@router.get("/temp/{job_id}")
+# HEAD is accepted too: link fetchers commonly probe with HEAD before GET, and
+# a 405 there reads as "file not found" to them.
+@router.api_route("/temp/{job_id}.tex", methods=["GET", "HEAD"])
+@router.api_route("/temp/{job_id}.zip", methods=["GET", "HEAD"])
+@router.api_route("/temp/{job_id}", methods=["GET", "HEAD"])
 async def get_temp_overleaf(job_id: str):
     """
     Endpoint 4: Public snip_uri target for Overleaf one-click import.

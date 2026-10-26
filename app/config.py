@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     MAX_FILE_SIZE_MB: int = 20
     RATE_LIMIT_PER_MINUTE: int = 10
-    TEMP_URL_TTL_SECONDS: int = 300
+    # Lifetime of the Overleaf snip_uri temp link (and of the RQ job result it
+    # is rebuilt from). 5 min proved too short: users review the LaTeX first,
+    # then click "Open in Overleaf" and hit a dead link.
+    TEMP_URL_TTL_SECONDS: int = 1800
     # Wall-clock budget for the pdflatex compile check. Raise on slow
     # (shared / free-tier) CPUs where a real paper can exceed 30 s.
     COMPILE_TIMEOUT_SECONDS: int = 30
